@@ -127,6 +127,7 @@ qt_renderer_rep::begin (void* handle) {
   }
   w= painter->device ()->width ();
   h= painter->device ()->height ();
+  painter->setRenderHint (QPainter::TextAntialiasing, true);
 }
 
 void
@@ -698,11 +699,13 @@ void
 qt_renderer_rep::draw (const QFont& qfn, const QString& qs, SI x, SI y,
                        double zoom) {
   decode (x, y);
+  painter->save ();
+  painter->setRenderHint (QPainter::TextAntialiasing, true);
   painter->setFont (qfn);
   painter->translate (x, y);
   painter->scale (zoom, zoom);
   painter->drawText (0, 0, qs);
-  painter->resetTransform ();
+  painter->restore ();
 }
 
 /******************************************************************************

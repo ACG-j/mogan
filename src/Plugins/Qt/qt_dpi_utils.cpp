@@ -62,6 +62,10 @@ DpiUtils::scaledFont (const QFont& baseFont, int basePixelSize,
                       QScreen* screen) {
   QFont font= baseFont;
   font.setPixelSize (scaled (basePixelSize, screen));
+  font.setStyleStrategy (QFont::PreferAntialias);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
+  font.setHintingPreference (QFont::PreferVerticalHinting);
+#endif
   return font;
 }
 

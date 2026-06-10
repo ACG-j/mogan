@@ -31,11 +31,20 @@ qt_font_rep::qt_font_rep (string name, string family2, double size2, int dpi2)
       qfn (to_qstring (family), size),
       // qfn (to_qstring (family), size, QFont::Normal, false),
       qfm (qfn) {
+  qfn.setStyleStrategy (QFont::PreferAntialias);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
+  qfn.setHintingPreference (QFont::PreferVerticalHinting);
+#endif
+  qfm= QFontMetricsF (qfn);
   double normalized_size= normalize_half_multiple_size (size);
   if (fabs (normalized_size - size) > 1e-6) {
     size= normalized_size;
     // 重新初始化 QFont 和 QFontMetricsF 使用修正后的尺寸
     qfn= QFont (to_qstring (family), size);
+    qfn.setStyleStrategy (QFont::PreferAntialias);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
+    qfn.setHintingPreference (QFont::PreferVerticalHinting);
+#endif
     qfm= QFontMetricsF (qfn);
   }
   set_font_size (this, size);
