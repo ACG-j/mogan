@@ -163,17 +163,7 @@ pretty-val : string
       (enum (set-pretty-preference "completion style" answer)
             '("Popup" "Inline")
             (get-pretty-preference "completion style")
-            "18em"))
-    (item (text "Auto backup:")
-      (hlist
-        (enum (set-preference "autobackup" (string-downcase answer))
-              '("On" "Off")
-              (tmstring-upcase-first (get-preference "autobackup"))
-              "12em")
-        //
-        (explicit-buttons
-          ((eval (auto-backup-button-label))
-           (open-auto-backup-location)))))))
+            "18em"))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Keyboard preferences
@@ -241,7 +231,13 @@ pretty-val : string
       (enum (set-pretty-preference "cyrillic input method" answer)
             '("None" "Translit" "Jcuken" "Yawerty")
             (get-pretty-preference "cyrillic input method")
-            "15em")))
+            "15em"))
+    (assuming (os-macos?)
+      (item (text "Keyboard shortcut style:")
+        (enum (set-pretty-preference* "keyboard shortcut style" answer)
+              '("Text" "Symbol")
+              (get-pretty-preference "keyboard shortcut style")
+              "15em"))))
   ====== ======
   (bold (text "Remote controllers with keyboard simulation"))
   ======
@@ -448,7 +444,6 @@ pretty-val : string
 ;; LaTeX ----------
 
 (define-preference-names "texmacs->latex:encoding"
-  ("ascii" "Ascii")
   ("cork"  "Cork with catcodes")
   ("utf-8" "Utf-8 with inputenc"))
 
@@ -510,7 +505,7 @@ pretty-val : string
   (aligned
     (item (text "Character encoding:")
       (enum (set-pretty-preference "texmacs->latex:encoding" answer)
-            '("Ascii" "Cork with catcodes" "Utf-8 with inputenc")
+            '("Utf-8 with inputenc" "Cork with catcodes")
             (get-pretty-preference "texmacs->latex:encoding")
             "15em")))
   ====== ======
@@ -637,7 +632,10 @@ pretty-val : string
   (aligned
     (meti (hlist // (text "Expand beamer slides"))
       (toggle (set-boolean-preference "texmacs->pdf:expand slides" answer)
-              (get-boolean-preference "texmacs->pdf:expand slides"))))
+              (get-boolean-preference "texmacs->pdf:expand slides")))
+    (meti (hlist // (text "Use external pdf viewer"))
+      (toggle (set-boolean-preference "use external pdf viewer" answer)
+              (get-boolean-preference "use external pdf viewer"))))
   (assuming (supports-native-pdf?)
     (aligned
       (item (text "Pdf version number:")
@@ -814,6 +812,16 @@ pretty-val : string
             (autosave-preferences-list)
             (get-autosave-preference-label)
             "12em"))
+    (item (text "Auto backup:")
+      (hlist
+        (enum (set-preference "autobackup" (string-downcase answer))
+              '("On" "Off")
+              (tmstring-upcase-first (get-preference "autobackup"))
+              "12em")
+        //                                     
+        (explicit-buttons
+          ((eval (auto-backup-button-label))
+           (open-auto-backup-location)))))
     (item (text "Security:")
       (enum (set-pretty-preference "security" answer)
             '("Accept no scripts" "Prompt on scripts" "Accept all scripts")

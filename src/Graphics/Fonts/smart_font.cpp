@@ -397,7 +397,7 @@ is_cjk_punct (string_u8 c) {
   return set->contains (c);
 }
 
-static bool
+bool
 in_unicode_range (string c, string range) {
   string uc= strict_cork_to_utf8 (c);
   if (N (uc) == 0) return false;
@@ -412,6 +412,9 @@ in_unicode_range (string c, string range) {
 
     // TeXmacs 特定的数学符号标记
     if (c == "<sqrt>") return true;
+
+    // 零宽空格 (U+200B) 需要 CJK 字体支持
+    if (code == 0x200B) return true;
 
     return is_cjk_punct (uc);
   }
@@ -622,6 +625,9 @@ smart_font_rep::smart_font_rep (string name, font base_fn, font err_fn,
   fn[SUBFONT_MAIN] = adjust_subfont (base_fn);
   fn[SUBFONT_ERROR]= adjust_subfont (err_fn);
   this->copy_math_pars (base_fn);
+  family_tokens      = trimmed_tokenize (family, ",");
+  given_font         = logical_font (family, variant, series, rshape);
+  italic_prime_cached= false;
   if (shape == "mathitalic" || shape == "mathupright" || shape == "mathshape") {
     if (is_math_family (mfam)) {
       rshape= "right";
@@ -629,7 +635,7 @@ smart_font_rep::smart_font_rep (string name, font base_fn, font err_fn,
       else {
         tree key= tuple ("math", mfam, variant, series, rshape);
         int  nr = sm->add_font (key, REWRITE_MATH);
-        initialize_font (nr);
+        maybe_initialize_font (nr);
         this->copy_math_pars (fn[nr]);
         fn[SUBFONT_MAIN]= fn[nr];
       }
@@ -642,7 +648,7 @@ smart_font_rep::smart_font_rep (string name, font base_fn, font err_fn,
       if (math_kind == 2) this->copy_math_pars (base_fn);
       else {
         italic_nr= sm->add_font (tuple ("fast-italic"), REWRITE_NONE);
-        initialize_font (italic_nr);
+        maybe_initialize_font (italic_nr);
         this->copy_math_pars (fn[italic_nr]);
       }
       (void) sm->add_font (tuple ("special"), REWRITE_SPECIAL);
@@ -833,7 +839,7 @@ smart_font_rep::advance (string s, int& pos, string& r, int& nr) {
         }
 
         if (count == 1 && nr != -1 && fn_index == nr) {
-          if (N (fn) <= nr || is_nil (fn[nr])) initialize_font (nr);
+          maybe_initialize_font (nr);
           if (!fn[nr]->supports (s (start, end))) break;
           pos= end;
         }
@@ -848,7 +854,7 @@ smart_font_rep::advance (string s, int& pos, string& r, int& nr) {
     }
     r= s (start, pos);
     if (nr < 0) return;
-    if (N (fn) <= nr || is_nil (fn[nr])) initialize_font (nr);
+    maybe_initialize_font (nr);
     if (sm->fn_rewr[nr] != REWRITE_NONE) r= rewrite (r, sm->fn_rewr[nr]);
   }
   if (DEBUG_VERBOSE) {
@@ -908,10 +914,9 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
   }
   array<string> a= trimmed_tokenize (fam, "=");
   if (N (a) >= 2) {
-    array<string> given= logical_font (family, variant, series, rshape);
-    fam                = a[1];
-    array<string> b    = tokenize (a[0], " ");
-    bool          ok   = is_wanted (c, fam, b, given);
+    fam             = a[1];
+    array<string> b = tokenize (a[0], " ");
+    bool          ok= is_wanted (c, fam, b, given_font);
     if (!ok) {
       return -1;
     }
@@ -927,7 +932,7 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
       if (cfn->supports (c)) {
         tree key= tuple ("subfont", fam);
         int  nr = sm->add_font (key, REWRITE_NONE);
-        initialize_font (nr);
+        maybe_initialize_font (nr);
         return sm->add_char (key, c);
       }
     }
@@ -951,10 +956,10 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
     }
     else {
       font cfn= closest_font (fam, variant, series, rshape, sz, dpi, 1);
-      if (cfn->supports (c)) {
+      if (cfn->supports (c) || c == "<#200B>") {
         tree key= tuple (fam, variant, series, rshape, "1");
         int  nr = sm->add_font (key, REWRITE_NONE);
-        initialize_font (nr);
+        maybe_initialize_font (nr);
         return sm->add_char (key, c);
       }
     }
@@ -962,33 +967,33 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
     if (fam == "roman" && range == "greek") {
       tree key= tuple ("greek", fam, variant, series, rshape);
       int  nr = sm->add_font (key, REWRITE_NONE);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     if (fam == "roman" && range == "latin") {
       tree key= tuple ("latin", fam, variant, series, rshape);
       int  nr = sm->add_font (key, REWRITE_NONE);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     if (is_math_family (fam)) {
       tree key= tuple ("math", fam, variant, series, rshape);
       int  nr = sm->add_font (key, REWRITE_MATH);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       if (fn[nr]->supports (rewrite (c, REWRITE_MATH)))
         return sm->add_char (key, c);
     }
     if ((fam == "roman" || fam == "cyrillic") && N (c) > 1) {
       tree key= tuple ("cyrillic", fam, variant, series, rshape);
       int  nr = sm->add_font (key, REWRITE_CYRILLIC);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       if (fn[nr]->supports (rewrite (c, REWRITE_CYRILLIC)))
         return sm->add_char (key, c);
     }
     if (c == "<#3000>") {
       tree key= tuple ("ignore");
       int  nr = sm->add_font (key, REWRITE_IGNORE);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     if (N (c) == 7 && starts (c, "<bbb-") && !occurs ("TeX Gyre", mfam)) {
@@ -1006,14 +1011,14 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
         vw               = max (vw, 0.25 * lw);
         tree key         = tuple ("poor-bbb", as_string (hw), as_string (vw));
         int  nr          = sm->add_font (key, REWRITE_POOR_BBB);
-        initialize_font (nr);
+        maybe_initialize_font (nr);
         return sm->add_char (key, c);
       }
     }
     if (starts (c, "<it-") && ends (c, ">")) {
       tree key= tuple ("it");
       int  nr = sm->add_font (key, REWRITE_ITALIC);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     if (fam == mfam && !is_italic_font (mfam)) {
@@ -1022,7 +1027,7 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
         if (virtually_defined (c, emu_names[i])) {
           tree key= tuple ("emulate", emu_names[i]);
           int  nr = sm->add_font (key, REWRITE_NONE);
-          initialize_font (nr);
+          maybe_initialize_font (nr);
           if (fn[nr]->supports (c)) return sm->add_char (key, c);
         }
     }
@@ -1039,10 +1044,10 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
     else v= variant * "-" * range;
     font cfn= closest_font (fam, v, series, rshape, sz, dpi, a);
     // cout << "Trying " << c << " in " << cfn->res_name << "\n";
-    if (cfn->supports (c)) {
+    if (cfn->supports (c) || c == "<#200B>") {
       tree key= tuple (fam, v, series, rshape, as_string (a));
       int  nr = sm->add_font (key, REWRITE_NONE);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
   }
@@ -1053,12 +1058,18 @@ smart_font_rep::resolve (string c, string fam, int attempt) {
 bool
 smart_font_rep::is_italic_prime (string c) {
   if (c != "'" && c != "`") return false;
-  array<string> a= trimmed_tokenize (family, ",");
-  string        s= "<#2B9>";
+  if (italic_prime_cached) return italic_prime_result;
+  string s= "<#2B9>";
   if (c == "`") s= "<backprime>";
-  for (int i= 0; i < N (a); i++)
-    if (resolve (s, a[i], 1) >= 0) return false;
-  return true;
+  bool result= true;
+  for (int i= 0; i < N (family_tokens); i++)
+    if (resolve (s, family_tokens[i], 1) >= 0) {
+      result= false;
+      break;
+    }
+  italic_prime_cached= true;
+  italic_prime_result= result;
+  return result;
 }
 
 extern bool has_poor_rubber;
@@ -1076,7 +1087,7 @@ smart_font_rep::resolve_rubber (string c, string fam, int attempt) {
   if (goal == "." || goal == "<nobracket>") {
     tree key= tuple ("ignore");
     int  nr = sm->add_font (key, REWRITE_IGNORE);
-    initialize_font (nr);
+    maybe_initialize_font (nr);
     return sm->add_char (key, c);
   }
   if (has_poor_rubber) {
@@ -1098,7 +1109,7 @@ smart_font_rep::resolve_rubber (string c, string fam, int attempt) {
   if (bnr >= 0 && bnr < N (fn) && !is_nil (fn[bnr])) {
     tree key= tuple ("rubber", as_string (bnr));
     int  nr = sm->add_font (key, REWRITE_NONE);
-    initialize_font (nr);
+    maybe_initialize_font (nr);
     // cout << fn[nr]->res_name << " supports " << c << "? "
     //      << fn[nr]->supports (c) << LF;
     if (fn[nr]->supports (c)) return sm->add_char (key, c);
@@ -1135,13 +1146,23 @@ smart_font_rep::resolve (string c) {
     debug_fonts << "Main subfont of " << cork_to_utf8 (c) << " is "
                 << fn[SUBFONT_MAIN]->res_name << LF;
   }
-  array<string> a= trimmed_tokenize (family, ",");
+  array<string> a= family_tokens;
 
   // Special handling for emoji characters - bypass font-family restrictions
   string range= get_unicode_range (c);
   // 如果设置了字体，就优先使用当前设置的字体
   if (fn[SUBFONT_MAIN]->supports (c)) {
-    return sm->add_char (tuple ("main"), c);
+    bool prefer_italic_greek= false;
+    if (math_kind != 0 && is_greek (c) && use_italic_greek (a) &&
+        shape != "mathupright") {
+      string gc= substitute_italic_greek (c);
+      if (gc != "" && fn[SUBFONT_MAIN]->supports (gc)) {
+        prefer_italic_greek= true;
+      }
+    }
+    if (!prefer_italic_greek) {
+      return sm->add_char (tuple ("main"), c);
+    }
   }
 
   if (range == "emoji") {
@@ -1154,9 +1175,20 @@ smart_font_rep::resolve (string c) {
         if (!is_nil (cfn) && cfn->supports (c)) {
           tree key= tuple ("emoji-font", parts[1]);
           int  nr = sm->add_font (key, REWRITE_NONE);
-          initialize_font (nr);
+          maybe_initialize_font (nr);
           return sm->add_char (key, c);
         }
+      }
+    }
+  }
+
+  // Fallback Cyrillic characters to default Chinese font
+  if (range == "cyrillic") {
+    string chinese_name= default_chinese_font_name ();
+    if (chinese_name != "roman") {
+      for (int attempt= 1; attempt <= FONT_ATTEMPTS; attempt++) {
+        int nr= resolve (c, "cyrillic=" * chinese_name, attempt);
+        if (nr >= 0) return nr;
       }
     }
   }
@@ -1166,14 +1198,14 @@ smart_font_rep::resolve (string c) {
     if (upc != "" && fn[SUBFONT_MAIN]->supports (upc)) {
       tree key= tuple ("up");
       int  nr = sm->add_font (key, REWRITE_UPRIGHT);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     string ugc= substitute_upright_greek (c);
     if (ugc != "" && fn[SUBFONT_MAIN]->supports (ugc)) {
       tree key= tuple ("upright-greek");
       int  nr = sm->add_font (key, REWRITE_UPRIGHT_GREEK);
-      initialize_font (nr);
+      maybe_initialize_font (nr);
       return sm->add_char (key, c);
     }
     if (is_greek (c) && use_italic_greek (a) && shape != "mathupright") {
@@ -1181,7 +1213,7 @@ smart_font_rep::resolve (string c) {
       if (gc != "" && fn[SUBFONT_MAIN]->supports (gc)) {
         tree key= tuple ("italic-greek");
         int  nr = sm->add_font (key, REWRITE_ITALIC_GREEK);
-        initialize_font (nr);
+        maybe_initialize_font (nr);
         return sm->add_char (key, c);
       }
       // cout << "Found " << c << " in greek\n";
@@ -1358,7 +1390,7 @@ smart_font_rep::initialize_font (int nr) {
     fn[nr]   = poor_bbb_font (sfn, pw, ph, 1.5 * pw);
   }
   else if (a[0] == "rubber" && N (a) == 2 && is_int (a[1])) {
-    initialize_font (as_int (a[1]));
+    maybe_initialize_font (as_int (a[1]));
     fn[nr]= adjust_subfont (rubber_font (fn[as_int (a[1])]));
     // fn[nr]= adjust_subfont (rubber_unicode_font (fn[as_int (a[1])]));
   }
@@ -1373,6 +1405,11 @@ smart_font_rep::initialize_font (int nr) {
                  << "\n";
     TM_FAILED ("substitution font loop detected");
   }
+}
+
+void
+smart_font_rep::maybe_initialize_font (int nr) {
+  if (N (fn) <= nr || is_nil (fn[nr])) initialize_font (nr);
 }
 
 static int

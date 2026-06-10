@@ -30,6 +30,7 @@
 #include "tm_configure.hpp"
 #include "tm_link.hpp"
 #include "tm_sys_utils.hpp"
+#include "tmfs_url.hpp"
 #include <moebius/drd/drd_std.hpp>
 #include <s7_tm.hpp>
 
@@ -169,7 +170,7 @@ tm_server_rep::tm_server_rep (app_type app) : def_zoomf (1.0) {
 #endif
 }
 
-tm_server_rep::~tm_server_rep () {}
+tm_server_rep::~tm_server_rep () { delete m_account; }
 server::server (app_type app) : rep (tm_new<tm_server_rep> (app)) {}
 server_rep*
 tm_server_rep::get_server () {
@@ -334,8 +335,8 @@ tm_server_rep::restart () {
   if (!args.isEmpty ()) args.removeFirst ();
 
   for (int i= 0; i < N (buffers); i++) {
-    string file_path= as_string (buffers[i]);
-    args << to_qstring (file_path);
+    if (is_rooted_tmfs (buffers[i])) continue;
+    args << to_qstring (as_string (buffers[i]));
   }
 
   QProcess::startDetached (QApplication::applicationFilePath (), args);

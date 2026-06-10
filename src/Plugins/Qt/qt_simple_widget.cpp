@@ -44,18 +44,22 @@ qt_simple_widget_rep::qt_simple_widget_rep ()
   backing_store= native_picture (0, 0, 0, 0);
 #endif
 }
-
 qt_simple_widget_rep::~qt_simple_widget_rep () {
   all_widgets->remove ((pointer) this);
 #ifndef USE_MUPDF_RENDERER
   if (backingPixmap != NULL) delete backingPixmap;
 #endif
   if (completionPopUp != nullptr) delete completionPopUp;
+  if (mathCompletionPopUp != nullptr) {
+    delete mathCompletionPopUp;
+  }
   if (textPopup != nullptr) delete textPopup;
 }
 
 QWidget*
 qt_simple_widget_rep::as_qwidget () {
+  if (qwid) return qwid;
+
   qwid= new QTMWidget (0, this);
   reapply_sent_slots ();
   SI width, height;
@@ -728,10 +732,14 @@ qt_simple_widget_rep::hide_math_completion_popup () {
   // 调用的结果就是没有操作，直接返回。
   if (mathCompletionPopUp) {
     mathCompletionPopUp->hide ();
-    mathCompletionPopUp->setParent (nullptr);
-    mathCompletionPopUp->deleteLater ();
+    delete mathCompletionPopUp;
     mathCompletionPopUp= nullptr;
   }
+}
+
+bool
+qt_simple_widget_rep::math_completion_popup_visible () {
+  return mathCompletionPopUp && mathCompletionPopUp->isVisible ();
 }
 
 void

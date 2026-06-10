@@ -14,23 +14,20 @@
 
 #include "qt_simple_widget.hpp"
 
-#include <QGraphicsDropShadowEffect>
 #include <QMouseEvent>
-#include <QPaintEvent>
 #include <QVBoxLayout>
 #include <QWidget>
 
 class QTMMathCompletionPopup : public QWidget {
 protected:
-  qt_simple_widget_rep*      owner;
-  QVBoxLayout*               layout;
-  QGraphicsDropShadowEffect* effect;
-  int                        cached_cursor_x;
-  int                        cached_cursor_y;
-  int                        cached_scroll_x;
-  int                        cached_scroll_y;
-  int                        cached_canvas_x;
-  double                     cached_magf;
+  qt_simple_widget_rep* owner;
+  QVBoxLayout*          layout;
+  int                   cached_cursor_x;
+  int                   cached_cursor_y;
+  int                   cached_scroll_x;
+  int                   cached_scroll_y;
+  int                   cached_canvas_x;
+  double                cached_magf;
 
 public:
   QTMMathCompletionPopup (QWidget* parent, qt_simple_widget_rep* owner);
@@ -48,10 +45,10 @@ protected:
                       int canvas_x);
   void getCachedPosition (int& x, int& y);
   void installEventFilterRecursively (QWidget* widget, QObject* filterObj);
+  void installTopLevelWindowFilter ();
 
 protected:
-  void paintEvent (QPaintEvent* event) override;
-  bool eventFilter (QObject* obj, QEvent* event);
+  bool eventFilter (QObject* obj, QEvent* event) override;
 };
 
 #endif // QT_MATH_COMPLETION_POPUP_HPP

@@ -16,6 +16,7 @@
 #include "file.hpp"
 #include "gui.hpp" // for gui_interrupted
 #include "message.hpp"
+#include "new_view.hpp"
 #include "observers.hpp"
 #include "preferences.hpp"
 #include "server.hpp"
@@ -70,8 +71,9 @@ edit_interface_rep::edit_interface_rep ()
       cursor_blink_active (false), cursor_blink_next (0),
       cursor_blink_period (500), table_selection (false),
       mouse_adjusting (false), oc (0, 0), temp_invalid_cursor (false),
-      hover_image_rect (0, 0, 0, 0), hover_image_path (), shadow (NULL),
-      stored (NULL), cur_sb (2), cur_wb (2) {
+      hover_image_rect (0, 0, 0, 0), hover_image_path (),
+      table_env_cache (rectangles ()), shadow (NULL), stored (NULL), cur_sb (2),
+      cur_wb (2) {
   user_active= false;
   input_mode = INPUT_NORMAL;
   gui_root_extents (cur_wx, cur_wy);
@@ -110,6 +112,7 @@ edit_interface_rep::suspend () {
 void
 edit_interface_rep::resume () {
   // cout << "Resume " << buf->buf->name << LF;
+  bench_start ("resume");
   got_focus= true;
   SERVER (menu_main ("(horizontal (link texmacs-menu))"));
   SERVER (menu_icons (0, "(horizontal (link texmacs-main-icons))"));
@@ -144,6 +147,7 @@ edit_interface_rep::resume () {
   // after a bugfix by Massimiliano during summer 2016
   eval ("(delayed (:idle 1) (refresh-window))");
 #endif
+  bench_end ("resume");
 }
 
 void
@@ -165,11 +169,38 @@ edit_interface_rep::get_pixel_size () {
 }
 
 void
+compute_zoom_scroll (SI cursor_x, SI cursor_y, SI old_sx, SI old_sy,
+                     double old_magf, double new_magf, SI& new_sx, SI& new_sy) {
+  new_sx= cursor_x - (SI) tm_round ((cursor_x - old_sx) * old_magf / new_magf);
+  new_sy= cursor_y - (SI) tm_round ((cursor_y - old_sy) * old_magf / new_magf);
+}
+
+void
 edit_interface_rep::set_zoom_factor (double zoom) {
+  double old_magf= magf;
+
+  // 获取旧视口中央（在更新 magf 之前，确保逻辑坐标一致）
+  SI old_cx= 0, old_cy= 0;
+  if (is_attached (this) && old_magf > 0.0) {
+    update_visible ();
+    old_cx= (vx1 + vx2) / 2;
+    old_cy= (vy1 + vy2) / 2;
+  }
+
   zoomf = zoom;
   magf  = zoomf / std_shrinkf;
   pixel = (SI) tm_round ((std_shrinkf * PIXEL) / zoomf);
   zpixel= max ((SI) tm_round (std_shrinkf * PIXEL), pixel);
+
+  if (is_attached (this) && old_magf > 0.0 && magf > 0.0) {
+    cursor cu= get_cursor ();
+    if (cu->valid) {
+      SI new_cx, new_cy;
+      compute_zoom_scroll (cu->ox, cu->oy, old_cx, old_cy, old_magf, magf,
+                           new_cx, new_cy);
+      scroll_to (new_cx, new_cy);
+    }
+  }
 }
 
 void
@@ -518,6 +549,25 @@ is_graphical (tree t) {
          is_func (t, PENSCRIPT) || is_func (t, CALLIGRAPHY);
 }
 
+static selection
+find_adjacent_selection (array<array<selection>> cell_cache, int i, int j,
+                         SI x1, SI x2, bool look_down) {
+  int di= look_down ? 1 : -1;
+  int ii= i + di;
+  while (ii >= 0 && ii < N (cell_cache)) {
+    if (j < N (cell_cache[ii]) && cell_cache[ii][j]->valid)
+      return cell_cache[ii][j];
+    for (int jj= 0; jj < N (cell_cache[ii]); jj++) {
+      selection bis= cell_cache[ii][jj];
+      if (!bis->valid || is_nil (bis->rs) || N (bis->rs) == 0) continue;
+      rectangle r= bis->rs->item;
+      if (r->x2 > x1 && r->x1 < x2) return bis;
+    }
+    ii+= di;
+  }
+  return selection ();
+}
+
 static void
 correct_adjacent (rectangles& rs1, rectangles& rs2) {
   if (N (rs1) != 1 || N (rs2) != 1) return;
@@ -536,6 +586,22 @@ correct_adjacent (rectangles& rs1, rectangles& rs2) {
   rs2->item->y2= mid;
 }
 
+static void
+correct_adjacent_horizontal (rectangles& rs1, rectangles& rs2) {
+  if (N (rs1) != 1 || N (rs2) != 1) return;
+  SI right1= rs1->item->x2;
+  SI left2 = rs2->item->x1;
+  if (rs1->item->x2 >= rs2->item->x2) {
+    return;
+  }
+  if (rs1->item->x1 >= rs2->item->x1) {
+    return;
+  }
+  SI mid       = (right1 + left2) >> 1;
+  rs1->item->x2= mid;
+  rs2->item->x1= mid;
+}
+
 void
 edit_interface_rep::compute_env_rects (path p, rectangles& rs, bool recurse) {
   if (p == rp) return;
@@ -544,6 +610,17 @@ edit_interface_rep::compute_env_rects (path p, rectangles& rs, bool recurse) {
   tree st= subtree (et, p);
   if ((is_func (st, TABLE) || is_func (st, SUBTABLE)) && recurse &&
       get_preference ("show table cells") == "on") {
+    if (table_env_cache->contains (st)) {
+      rs << table_env_cache[st];
+      return;
+    }
+
+    bool is_subtable_inner= false;
+    if (is_func (st, TABLE)) {
+      tree ppt= subtree (et, path_up (path_up (p)));
+      if (is_func (ppt, SUBTABLE)) is_subtable_inner= true;
+    }
+
     rectangles rl;
 
     int table_rows= N (st);
@@ -574,29 +651,88 @@ edit_interface_rep::compute_env_rects (path p, rectangles& rs, bool recurse) {
     for (int i= 0; i < table_rows; i++) {
       if (is_func (st[i], ROW)) {
         for (int j= 0; j < N (st[i]); j++) {
-          selection  sel = cell_cache[i][j];
+          selection sel= cell_cache[i][j];
+          if (!sel->valid || is_nil (sel->rs) || N (sel->rs) == 0) continue;
           rectangles rsel= copy (thicken (sel->rs, 0, 2 * pixel));
 
           if (i > 0 && j < row_sizes[i - 1] && N (cell_cache[i - 1]) > j) {
-            selection  bis = cell_cache[i - 1][j];
-            rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
-            correct_adjacent (rbis, rsel);
+            selection bis= cell_cache[i - 1][j];
+            if (!bis->valid || is_nil (bis->rs) || N (bis->rs) == 0) {
+              bis= find_adjacent_selection (cell_cache, i, j, sel->rs->item->x1,
+                                            sel->rs->item->x2, false);
+            }
+            if (bis->valid && !is_nil (bis->rs) && N (bis->rs) > 0) {
+              // Skip if cells are on different pages. Use un-thickened rects
+              // because thickening could mask the page gap.
+              if (!(bis->rs->item->y1 > sel->rs->item->y2)) {
+                rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
+                correct_adjacent (rbis, rsel);
+              }
+            }
           }
 
           if (i + 1 < table_rows && j < row_sizes[i + 1] &&
               N (cell_cache[i + 1]) > j) {
-            selection  bis = cell_cache[i + 1][j];
-            rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
-            correct_adjacent (rsel, rbis);
+            selection bis= cell_cache[i + 1][j];
+            if (!bis->valid || is_nil (bis->rs) || N (bis->rs) == 0) {
+              bis= find_adjacent_selection (cell_cache, i, j, sel->rs->item->x1,
+                                            sel->rs->item->x2, true);
+            }
+            if (bis->valid && !is_nil (bis->rs) && N (bis->rs) > 0) {
+              if (!(sel->rs->item->y1 > bis->rs->item->y2)) {
+                rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
+                correct_adjacent (rsel, rbis);
+              }
+            }
+          }
+
+          if (j > 0) {
+            selection bis= cell_cache[i][j - 1];
+            if (bis->valid && !is_nil (bis->rs) && N (bis->rs) > 0) {
+              rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
+              correct_adjacent_horizontal (rbis, rsel);
+            }
+          }
+
+          if (j + 1 < N (cell_cache[i])) {
+            selection bis= cell_cache[i][j + 1];
+            if (bis->valid && !is_nil (bis->rs) && N (bis->rs) > 0) {
+              rectangles rbis= copy (thicken (bis->rs, 0, 2 * pixel));
+              correct_adjacent_horizontal (rsel, rbis);
+            }
           }
 
           rectangles selp= thicken (rsel, pixel / 2, pixel / 2);
           rectangles selm= thicken (rsel, -pixel / 2, -pixel / 2);
-          rl << simplify (::correct (selp - selm));
+
+          if (is_subtable_inner) {
+            rectangles rdiff;
+            if (i > 0) {
+              rdiff << rectangles (rectangle (selp->item->x1, selm->item->y2,
+                                              selp->item->x2, selp->item->y2));
+            }
+            if (i + 1 < table_rows) {
+              rdiff << rectangles (rectangle (selp->item->x1, selp->item->y1,
+                                              selp->item->x2, selm->item->y1));
+            }
+            if (j > 0) {
+              rdiff << rectangles (rectangle (selp->item->x1, selm->item->y1,
+                                              selm->item->x1, selm->item->y2));
+            }
+            if (j + 1 < N (cell_cache[i])) {
+              rdiff << rectangles (rectangle (selm->item->x2, selm->item->y1,
+                                              selp->item->x2, selm->item->y2));
+            }
+            rl << simplify (::correct (rdiff));
+          }
+          else {
+            rl << simplify (::correct (selp - selm));
+          }
         }
       }
     }
     rs << simplify (rl);
+    table_env_cache (st)= simplify (rl);
     if (recurse) compute_env_rects (path_up (p), rs, recurse);
   }
   else if (is_atomic (st) || drd->is_child_enforcing (st) ||
@@ -677,13 +813,33 @@ edit_interface_rep::change_time () {
 
 void
 edit_interface_rep::update_menus () {
-  SERVER (menu_main ("(horizontal (link texmacs-menu))"));
-  SERVER (menu_icons (0, "(horizontal (link texmacs-main-icons))"));
-  SERVER (menu_icons (1, "(horizontal (link texmacs-mode-icons))"));
-  SERVER (menu_icons (2, "(horizontal (link texmacs-focus-icons))"));
-  SERVER (menu_icons (3, "(horizontal (link texmacs-extra-icons))"));
+  bool is_startup= is_startup_tab_buffer (buf->buf->name);
+  bool is_chat   = is_chat_tab_buffer (buf->buf->name);
+  bench_start ("update_menus");
+
+  if (get_server ()->in_full_screen_mode ()) {
+    bench_end ("update_menus");
+    return;
+  }
+
+  if (!is_startup && !is_chat)
+    SERVER (menu_main ("(horizontal (link texmacs-menu))"));
+  if (!is_startup && !is_chat)
+    SERVER (menu_icons (0, "(horizontal (link texmacs-main-icons))"));
+  if (!is_startup)
+    SERVER (menu_icons (1, "(horizontal (link texmacs-mode-icons))"));
+  if (!is_startup && !is_chat)
+    SERVER (menu_icons (2, "(horizontal (link texmacs-focus-icons))"));
+  if (!is_startup && !is_chat)
+    SERVER (menu_icons (3, "(horizontal (link texmacs-extra-icons))"));
   SERVER (menu_icons (4, "(horizontal (link texmacs-tab-pages))"));
-  SERVER (notification_bar ("(horizontal (link texmacs-notification-bar))"));
+  if (!is_startup && !is_chat)
+    SERVER (notification_bar ("(horizontal (link texmacs-notification-bar))"));
+  if (is_startup || is_chat) {
+    last_update= last_change;
+    bench_end ("update_menus");
+    return;
+  }
   array<url> a= buffer_to_windows (buf->buf->name);
   if (N (a) > 0) {
     string win = "(string->url \"" * as_string (a[0]) * "\")";
@@ -707,6 +863,7 @@ edit_interface_rep::update_menus () {
   cache_memorize ();
   last_update= last_change;
   save_user_preferences ();
+  bench_end ("update_menus");
 }
 
 int
@@ -736,6 +893,9 @@ edit_interface_rep::apply_changes () {
   // cout << "et= " << et << "\n";
   // cout << "tp= " << tp << "\n";
   // cout << HRULE << "\n";
+
+  if (env_change & (THE_TREE + THE_ENVIRONMENT))
+    table_env_cache= hashmap<tree, rectangles> (rectangles ());
 
   update_visible ();
   rectangle new_visible= rectangle (vx1, vy1, vx2, vy2);
@@ -1130,6 +1290,9 @@ void
 edit_interface_rep::full_screen_mode (bool flag) {
   full_screen= flag;
   send_invalidate_all (this);
+  if (!flag) {
+    notify_change (THE_MENUS);
+  }
 }
 
 void

@@ -100,10 +100,11 @@ public:
   virtual void   set_background (brush b)= 0;
 
   /* drawing */
-  virtual void draw (int char_code, font_glyphs fn, SI x, SI y)= 0;
-  virtual void line (SI x1, SI y1, SI x2, SI y2)               = 0;
-  virtual void lines (array<SI> x, array<SI> y)                = 0;
-  virtual void clear (SI x1, SI y1, SI x2, SI y2)              = 0;
+  virtual void draw (int glyph_index, font_glyphs fn, SI x, SI y,
+                     int codepoint= -1)          = 0;
+  virtual void line (SI x1, SI y1, SI x2, SI y2) = 0;
+  virtual void lines (array<SI> x, array<SI> y)  = 0;
+  virtual void clear (SI x1, SI y1, SI x2, SI y2)= 0;
   virtual void clear_pattern (SI mx1, SI my1, SI mx2, SI my2, SI x1, SI y1,
                               SI x2, SI y2);
   virtual void clear_pattern (SI x1, SI y1, SI x2, SI y2);
@@ -117,6 +118,7 @@ public:
   virtual void draw_selection (rectangles rs);
   virtual void draw_curve (curve c, bool filled= false);
   virtual bool support_native_curve (curve c);
+  virtual void end_text ();
   bool         draw_emoji (int char_code, font_glyphs fn, SI x, SI y);
 
   /* shadowing and copying rectangular regions across renderers */

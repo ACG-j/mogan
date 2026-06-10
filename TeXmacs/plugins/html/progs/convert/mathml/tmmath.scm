@@ -80,9 +80,9 @@
   (with y (logic-ref tm->mathml-large% x)
     (if y y (cork->utf8 x))))
 
-(define (tmmath-left l) `(m:mo (@ (form "prefix")) ,(tmmath-large (car l))))
-(define (tmmath-mid l) `(m:mo ,(tmmath-large (car l))))
-(define (tmmath-right l) `(m:mo (@ (form "postfix")) ,(tmmath-large (car l))))
+(define (tmmath-left l) `(m:mo (@ (form "prefix") (stretchy "true")) ,(tmmath-large (car l))))
+(define (tmmath-mid l) `(m:mo (@ (stretchy "true")) ,(tmmath-large (car l))))
+(define (tmmath-right l) `(m:mo (@ (form "postfix") (stretchy "true")) ,(tmmath-large (car l))))
 
 (define (tmmath-big l)
   (cond ((== (car l) ".") "")
@@ -249,6 +249,12 @@
 
 (define (tmmath-noop l) "")
 
+(define (tmmath-hspace l)
+  (let* ((len (if (null? l) "1em" (car l)))
+         (s (string-replace (if (string? len) len (object->string len)) "*" ""))
+         (s* (if (string->number s) (string-append s "em") s)))
+    `(m:mspace (@ (width ,s*)))))
+
 (define (tmmath-first l)
   (tmmath (car l)))
 
@@ -364,6 +370,9 @@
   (block* tmmath-first)
 
   ;; Other markup
+  (space tmmath-hspace)
+  (hspace tmmath-hspace)
+  (htab tmmath-hspace)
   (document tmmath-concat)
   (para tmmath-concat)
   (surround tmmath-surround)

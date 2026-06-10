@@ -77,6 +77,21 @@ decode_url (string s) {
   return url_root (s (0, i)) * url_general (s (i + 1, N (s)), URL_CLEAN_UNIX);
 }
 
+/**
+ * @brief 判断 buffer 名称是否指向聊天标签页。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称以 \c tmfs://chat-tab 开头则返回 true。
+ */
+bool
+is_chat_tab_buffer (url name) {
+  return starts (as_string (name), "tmfs://chat-tab");
+}
+
+bool
+is_startup_tab_buffer (url name) {
+  return name == url ("tmfs://startup-tab");
+}
+
 url
 abstract_view (tm_view vw) {
   if (vw == NULL) return url_none ();
@@ -436,11 +451,16 @@ kill_tabpage (url win_u, url u) {
   if (vw->buf != NULL && vw->buf->buf->name == url ("tmfs://startup-tab")) {
     return;
   }
+  // TODO: 聊天标签页当前不可关闭，后续需支持可删除
+  if (vw->buf != NULL && is_chat_tab_buffer (vw->buf->buf->name)) {
+    return;
+  }
   tm_window win        = vw->win;
   tm_window win_tabpage= vw->win_tabpage;
   if (win_tabpage == NULL) return;
   if (win == NULL) win= win_tabpage;
-  bool is_current                    = (get_current_view () == u);
+  url  current_u                     = get_current_view_safe ();
+  bool is_current                    = (!is_none (current_u) && current_u == u);
   bool refresh_tabbar_for_non_current= !is_current;
 
   // 第一步: 设定 win_tabpage
@@ -569,6 +589,18 @@ attach_view (url win_u, url u) {
   // cout << "View attached\n";
 }
 
+static void
+detach_view_for_switch (url u) {
+  tm_view vw= concrete_view (u);
+  if (vw == NULL) return;
+  tm_window win= vw->win;
+  if (win == NULL) return;
+  vw->win   = NULL;
+  widget wid= win->wid;
+  ASSERT (is_attached (wid), "widget should be attached");
+  vw->ed->suspend ();
+}
+
 void
 detach_view (url u) {
   tm_view vw= concrete_view (u);
@@ -601,7 +633,7 @@ window_set_view (url win_u, url new_u, bool focus) {
   // cout << "Found view\n";
   ASSERT (new_vw->win == NULL, "view attached to other window");
   url old_u= window_to_view (win_u);
-  if (!is_none (old_u)) detach_view (old_u);
+  if (!is_none (old_u)) detach_view_for_switch (old_u);
   attach_view (win_u, new_u);
   if (focus || get_current_view () == old_u) set_current_view (new_u);
   // 在 set_current_view 之后调用 set_window_url，确保 SLOT_FILE 处理时 current
@@ -662,6 +694,7 @@ view_set_window (url view_u, url win_u, bool focus) {
     }
   }
   view->win_tabpage= win;
+  notify_set_view (view_u);
   if (attached && !found) {
     // view 所在的 TabBar 没有其他标签页了
     kill_window (view_win_tabpage_u);

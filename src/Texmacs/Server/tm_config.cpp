@@ -232,9 +232,12 @@ mathop (string s) {
 
 static void
 system_kbd_initialize (hashmap<string, tree>& h) {
-  if (N (h) != 0)
-    ;
-  else if (use_macos_fonts ()) {
+  if (N (h) != 0) return;
+  string style       = get_preference ("keyboard shortcut style", "text");
+  bool   show_symbols= (style == "symbol" || style == "Symbol") && os_macos ();
+  bool   show_text   = !show_symbols;
+
+  if (show_symbols) {
     h ("S-")       = "<#21E7>";
     h ("C-")       = "<#2303>";
     h ("A-")       = "<#2325>";
@@ -263,10 +266,11 @@ system_kbd_initialize (hashmap<string, tree>& h) {
     h ("<less>")   = "<#3C>";
     h ("<gtr>")    = "<#3E>";
   }
-  else if (gui_is_qt ()) {
+  else if (show_text) {
     h ("S-")= localize ("Shift::keyboard", true);
     h ("C-")= localize ("Ctrl::keyboard", true);
-    h ("A-")= localize ("Alt::keyboard", true);
+    if (os_macos ()) h ("A-")= localize ("Option::keyboard", true);
+    else h ("A-")= localize ("Alt::keyboard", true);
     if (os_win ()) h ("M-")= localize ("Win::keyboard", true);
     else if (os_macos ()) h ("M-")= localize ("Command::keyboard", true);
     else h ("M-")= localize ("Super::keyboard", true);

@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "qt_ui_element.hpp"
+#include "preferences.hpp"
 #include "qt_gui.hpp"
 #include "qt_menu.hpp"
 #include "qt_picture.hpp"
@@ -451,31 +452,55 @@ qt_ui_element_rep::as_qaction () {
        */
       const QKeySequence& qks= to_qkeysequence (ks);
       if (!qks.isEmpty ()) {
-        act->setShortcut (qks);
-        act->setShortcutVisibleInContextMenu (true);
-#ifdef Q_OS_WIN
-        // On Windows, override the displayed shortcut hint to show "Win+"
-        // instead of "Meta+" without changing the actual shortcut handling.
-        QString base  = act->text ();
-        int     tabPos= base.indexOf ('\t');
-        if (tabPos >= 0) base= base.left (tabPos); // avoid duplicate suffix
-        QString disp= qks.toString (QKeySequence::NativeText);
-        // Qt uses "Meta+" textual name on Windows; show "Win+" as requested
-        disp.replace (QStringLiteral ("Meta+"), QStringLiteral ("Win+"));
-        act->setText (base + QLatin1Char ('\t') + disp);
-#elif defined(Q_OS_MAC)
-        // Do nothing: Mac users expect to see "Meta+" (the Command key)
-#else
-        // On Linux, override the displayed shortcut hint to show "Super+"
-        // instead of "Meta+" without changing the actual shortcut handling.
-        QString base  = act->text ();
-        int     tabPos= base.indexOf ('\t');
-        if (tabPos >= 0) base= base.left (tabPos); // avoid duplicate suffix
-        QString disp= qks.toString (QKeySequence::NativeText);
-        // Qt uses "Meta+" textual name on Linux; show "Super+" as requested
-        disp.replace (QStringLiteral ("Meta+"), QStringLiteral ("Super+"));
-        act->setText (base + QLatin1Char ('\t') + disp);
+        string shortcut_style=
+            get_preference ("keyboard shortcut style", "text");
+        bool is_mac= false;
+#ifdef Q_OS_MAC
+        is_mac= true;
 #endif
+
+        if ((shortcut_style == "text" || shortcut_style == "Text") && is_mac) {
+        }
+        else {
+          act->setShortcut (qks);
+          act->setShortcutVisibleInContextMenu (true);
+        }
+
+        QString base  = act->text ();
+        int     tabPos= base.indexOf ('\t');
+        if (tabPos >= 0) base= base.left (tabPos); // avoid duplicate suffix
+
+        if (is_mac) {
+          if (shortcut_style == "text" || shortcut_style == "Text") {
+            QString disp= qks.toString (QKeySequence::PortableText);
+            disp.replace (QStringLiteral ("Meta+"),
+                          QStringLiteral ("Ctrl_TEMP+"));
+            disp.replace (QStringLiteral ("Ctrl+"), QStringLiteral ("Cmd+"));
+            disp.replace (QStringLiteral ("Ctrl_TEMP+"),
+                          QStringLiteral ("Ctrl+"));
+            disp.replace (QStringLiteral ("Alt+"), QStringLiteral ("Option+"));
+            act->setText (base + QLatin1Char ('\t') + disp);
+          }
+        }
+        else {
+          if (shortcut_style == "symbol") {
+            QString disp= qks.toString (QKeySequence::PortableText);
+            disp.replace (QStringLiteral ("Ctrl+"), QStringLiteral ("⌃"));
+            disp.replace (QStringLiteral ("Alt+"), QStringLiteral ("⌥"));
+            disp.replace (QStringLiteral ("Shift+"), QStringLiteral ("⇧"));
+            disp.replace (QStringLiteral ("Meta+"), QStringLiteral ("⌘"));
+            act->setText (base + QLatin1Char ('\t') + disp);
+          }
+          else {
+            QString disp= qks.toString (QKeySequence::NativeText);
+#ifdef Q_OS_WIN
+            disp.replace (QStringLiteral ("Meta+"), QStringLiteral ("Win+"));
+#else
+            disp.replace (QStringLiteral ("Meta+"), QStringLiteral ("Super+"));
+#endif
+            act->setText (base + QLatin1Char ('\t') + disp);
+          }
+        }
       }
 
       // NOTE: this used to be a Qt::QueuedConnection, but the slot would not
@@ -514,7 +539,7 @@ qt_ui_element_rep::as_qaction () {
       {
         typedef quartet<string, int, color, bool> T1;
         T1 y= open_box<T1> (get_payload (help, text_widget));
-        act->setToolTip (to_qstring (cork_to_utf8 (y.x1)));
+        act->setToolTip (utf8_to_qstring (cork_to_utf8 (y.x1)));
         // HACK: force displaying of the tooltip (needed for items in the
         // QMenuBar)
         QObject::connect (act, SIGNAL (hovered ()), act, SLOT (showToolTip ()));
@@ -930,7 +955,7 @@ qt_ui_element_rep::as_qwidget () {
     typedef quartet<string, int, color, bool> T1;
     T1       y= open_box<T1> (get_payload (help, text_widget));
     QWidget* w= qtw->as_qwidget ();
-    w->setToolTip (to_qstring (cork_to_utf8 (y.x1)));
+    w->setToolTip (utf8_to_qstring (cork_to_utf8 (y.x1)));
     qwid= w;
   } break;
 

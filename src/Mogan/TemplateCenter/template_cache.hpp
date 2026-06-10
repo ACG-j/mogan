@@ -27,6 +27,7 @@ struct CacheEntry {
   QString   localPath;
   QDateTime cachedAt;
   qint64    fileSize;
+  QString   fileMd5;
 
   CacheEntry () : fileSize (0) {}
 };
@@ -46,31 +47,32 @@ public:
   explicit TemplateCache (QObject* parent= nullptr);
   ~TemplateCache ();
 
-  // Initialization
+  // 初始化
   bool initialize ();
   bool isInitialized () const { return initialized_; }
 
-  // Metadata cache operations
+  // 元数据缓存
   QHash<QString, TemplateMetadataPtr> loadMetadataCache ();
   void saveMetadataCache (const QHash<QString, TemplateMetadataPtr>& metadata);
 
-  // Category cache operations
+  // 推荐模板ID缓存
+  QStringList loadRecommendIdsCache ();
+  void        saveRecommendIdsCache (const QStringList& recommendIds);
+
+  // 分类缓存
   QList<TemplateCategory> loadCategoriesCache ();
   void saveCategoriesCache (const QList<TemplateCategory>& categories);
 
-  // Template file operations
+  // 模板文件缓存
   bool              isTemplateCached (const QString& templateId) const;
   QString           cachedTemplatePath (const QString& templateId) const;
   void              registerCachedTemplate (const QString& templateId,
-                                            const QString& localPath, qint64 fileSize);
+                                            const QString& localPath, qint64 fileSize,
+                                            const QString& fileMd5= QString ());
   void              removeCachedTemplate (const QString& templateId);
   QList<CacheEntry> cachedTemplates () const;
 
-  // Metadata ETag for HTTP conditional requests
-  QString metadataEtag () const;
-  void    setMetadataEtag (const QString& etag);
-
-  // Cache management
+  // 缓存管理
   void   clearCache ();
   qint64 cacheSize () const;
 
@@ -87,7 +89,6 @@ private:
   QString categoriesCachePath () const;
   QString templatesCacheDir () const;
   QString cacheIndexPath () const;
-  QString metadataEtagPath () const;
 
   // Cache index management
   void loadCacheIndex ();
@@ -101,7 +102,6 @@ private:
 
   // Cache storage
   QHash<QString, CacheEntry> cacheIndex_;
-  mutable QString            metadataEtag_;
 };
 
 #endif // TEMPLATE_CACHE_HPP

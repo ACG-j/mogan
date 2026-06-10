@@ -1446,6 +1446,7 @@ FirstLaunchTutorialController::maybeStartForMainWindow (
     target->setProperty ("tutorialScheduled", false);
     if (!shouldStart (flow)) return;
 
+    eval_scheme ("(plugin-initialize 'tutorial)");
     m_startedThisSession= true;
     m_engine->start (target, flow, buildRegistry (target));
   });

@@ -198,13 +198,12 @@ qt_chooser_widget_rep::set_type (const string& _type) {
   }
   if (_type == "image") {
     mainNameFilter+=
-        " (*.jpg *.jpeg *.jpe *.png *.bmp *.tif *.tiff *.svg *.pdf *.webp)";
+        " (*.jpg *.jpeg *.jpe *.png *.tif *.tiff *.svg *.pdf *.webp)";
     nameFilters << mainNameFilter;
     nameFilters << to_qstring (translate ("JPEG File InterChange Format") *
                                " (*.jpg *.jpeg *.jpe)");
     nameFilters << to_qstring (translate ("Portable Network Graphics") *
                                " (*.png)");
-    nameFilters << to_qstring (translate ("Windows Bitmap") * " (*.bmp)");
     nameFilters << to_qstring (translate ("Tag Image File Format") *
                                " (*.tif *tiff)");
     nameFilters << to_qstring (translate ("Scalable Vector Graphics") *
@@ -222,7 +221,7 @@ qt_chooser_widget_rep::set_type (const string& _type) {
     nameFilters << to_qstring (translate ("All Format") * " (*)");
   }
   else if (_type == "action_open") {
-    mainNameFilter+= " (*.tmu *.tm *.ts *.tp)";
+    mainNameFilter+= " (*.tmu *.tm *.ts *.tp *.pdf)";
     //" (*.scala *.sc *.sbt *.pants *.ltx *.sty *.cls *.tex *.bib *.rawbib *.jl
     //*.js *.java *.sld *.ss *.tmu *.txt *.py *.json *.html *.hh *.cpp *cc *hpp
     //*.scm *.elv *.md *.sh *.csv)"
@@ -240,7 +239,7 @@ qt_chooser_widget_rep::set_type (const string& _type) {
     nameFilters << to_qstring (translate ("Java files") * " (*.java)");
     nameFilters << to_qstring (translate ("Scheme files") *
                                " (*.ss *.sld *.scm)");
-    nameFilters << to_qstring (translate ("Latex files") *
+    nameFilters << to_qstring (translate ("LaTeX files") *
                                " (*.ltx *.sty *.tex *.bib *.rawbib *.cls)");
     nameFilters << to_qstring (translate ("Web files") *
                                " (*.html *.xhtml *.htm)");

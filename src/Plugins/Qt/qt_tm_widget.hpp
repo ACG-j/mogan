@@ -23,6 +23,7 @@
 #include "QTMScrollView.hpp"
 #include "QTMTabPage.hpp"
 #include "QTMWidget.hpp"
+#include "qt_chat_tab_widget.hpp"
 
 #include <QLayout>
 #include <QMainWindow>
@@ -41,6 +42,8 @@
 class QLabel;
 class QToolBar;
 class QTMInteractivePrompt;
+class PDFReaderWidget;
+class PdfToolBar;
 
 /*! Models one main window with toolbars, an associated view, etc.
 
@@ -73,10 +76,12 @@ class qt_tm_widget_rep : public qt_window_widget_rep {
   QToolBar*               modeToolBar;
   QToolBar*               focusToolBar;
   QToolBar*               userToolBar;
+  PdfToolBar*             pdfToolBar; ///< PDF 阅读器工具栏
   QDockWidget*            sideTools;
   QDockWidget*            leftTools;
   QDockWidget*            bottomTools;
   QDockWidget*            extraTools;
+  QDockWidget*            chatSideDock; ///< AI 聊天侧边栏 Dock
   QTMTabPageContainer*    tabPageContainer;
   QTMAuxiliaryWidget*     auxiliaryWidget;
   QWK::WidgetWindowAgent* windowAgent;
@@ -91,6 +96,7 @@ class qt_tm_widget_rep : public qt_window_widget_rep {
   QLabel*                 membershipTitleLabel;
   QPushButton*            loginActionButton;
   QPushButton*            logoutButton;
+  QPushButton* chatSidebarToggleBtn; ///< 文档区域右上角的新建对话浮动按钮
 
   // 更新提示区域控件
   QWidget*     m_updateSection     = nullptr;
@@ -113,6 +119,7 @@ class qt_tm_widget_rep : public qt_window_widget_rep {
 
   bool    visibility[12];
   bool    full_screen;
+  bool    is_presentation;
   bool    menuToolBarVisibleCache;
   bool    titleBarVisibleCache;
   QString m_userId;
@@ -150,6 +157,9 @@ private:
   void showNotLoggedInDialog (const QString& errorMessage);
   void updateVipButtonVisibility (bool isLoggedIn, const QString& memberType);
   void logout ();
+  void sync_chat_sidebar_mode ();
+  void position_chat_sidebar_button ();
+  void set_central_widget_updates_frozen (bool frozen);
 
   // Version update notification
   void    checkVersionUpdate ();
@@ -170,13 +180,40 @@ private:
   qt_widget tab_bar_widget;
   qt_widget notification_bar_widget;
   qt_widget auxiliary_widget;
-  qt_widget dock_window_widget; // trick to return correct widget position
-  QWidget*  startupContentWidget;
-  bool      startupTabMode;
+  qt_widget dock_window_widget;   // trick to return correct widget position
+  QWidget*  startupContentWidget; ///\< 启动标签页模式下显示的控件。
+  QWidget*
+       chatContentWidget; ///\< 聊天标签页模式下显示的控件（QTChatTabWidget）。
+  bool startupTabMode;    ///\< 启动标签页视图是否激活。
+  PDFReaderWidget* pdfViewerWidget;   ///\< PDF 标签页模式下的阅读器控件。
+  bool             pdfTabMode;        ///\< PDF 阅读器标签页是否激活。
+  QString          currentPdfPath;    ///\< 当前显示的 PDF 路径。
+  QString          lastLoadedPdfPath; ///\< 上次加载的 PDF 路径。
+  bool             chatTabMode;       ///\< 聊天标签页视图是否激活。
+  bool             chatSidebarMode;   ///\< AI 聊天侧边栏模式是否激活。
+  bool   chatSidebarModeMemory_;      ///\< 记忆用户主动设置的侧边栏模式状态。
+  bool   centralWidgetUpdatesFrozen_; ///\< 标签切换期间冻结编辑区更新。
+  string currentEditorFile;           ///\< 当前编辑器打开的文件路径。
 
 public:
   qt_tm_widget_rep (int mask, command _quit);
   ~qt_tm_widget_rep ();
+
+  /**
+   * @brief 判断新建标签页前是否需要把 current view 切回主窗口默认 view。
+   *
+   * 当焦点位于 AI Chat 输入框等非默认 view 时，顶部标签栏 “+” 的新建命令
+   * 需要先恢复到所属主窗口的默认 view，否则 `(new-document)` 可能在错误的
+   * view 上执行或直接失败。此逻辑提取为静态方法，便于单元测试。
+   *
+   * @param currentView   当前全局 current view
+   * @param currentWindow 当前 view 关联的 window（可为空）
+   * @param ownerWindow   触发新建操作的主窗口
+   * @return 需要切回主窗口默认 view 时返回 true
+   */
+  static bool shouldResetCurrentViewForNewTab (url currentView,
+                                               url currentWindow,
+                                               url ownerWindow);
 
   virtual widget plain_window_widget (string name, command quit, int b);
 
@@ -192,6 +229,14 @@ public:
   void        openRenewalPage ();
   void        checkNetworkAvailable ();
   void        sync_startup_tab_mode ();
+  /**
+   * @brief 同步聊天标签页控件的可见性。
+   *
+   * 当 \ref chatTabMode 为 true 时，隐藏编辑器并显示
+   * \ref chatContentWidget（按需创建）。
+   * 否则隐藏聊天控件并恢复编辑器。
+   */
+  void sync_chat_tab_mode ();
 
   friend class QTMInteractiveInputHelper;
 

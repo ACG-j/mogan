@@ -36,6 +36,8 @@ struct text_box_rep : public box_rep {
   box expand_glyphs (int mode, double factor);
 
   void   display (renderer ren);
+  color  get_bg_color ();
+  void   set_bg_color (color c);
   double left_slope ();
   double right_slope ();
   SI     left_correction ();
@@ -449,6 +451,16 @@ text_box_rep::get_type () {
   return TEXT_BOX;
 }
 
+color
+text_box_rep::get_bg_color () {
+  return bg_color;
+}
+
+void
+text_box_rep::set_bg_color (color c) {
+  bg_color= c;
+}
+
 int
 text_box_rep::get_leaf_left_pos () {
   return pos;
@@ -624,10 +636,11 @@ get_wide_stix (string s, font fn, SI width) {
  ******************************************************************************/
 
 box
-delimiter_box (path ip, string s, font fn, pencil pen, SI bot, SI top) {
+delimiter_box (path ip, string s, font fn, pencil pen, SI bot, SI top,
+               color bg) {
   SI     h= top - bot;
   string r= get_delimiter (s, fn, h);
-  box    b= text_box (ip, 0, r, fn, pen);
+  box    b= text_box_with_bg (ip, 0, r, fn, pen, bg, xkerning ());
   SI     x= -b->x1;
   SI     y= (top + bot - b->y1 - b->y2) >> 1;
   if (s == "<large-sqrt>") {
@@ -654,10 +667,10 @@ delimiter_box (path ip, string s, font fn, pencil pen, SI bot, SI top) {
 
 box
 delimiter_box (path ip, string s, font fn, pencil pen, SI bot, SI top, SI mid,
-               SI real_bot, SI real_top) {
+               SI real_bot, SI real_top, color bg) {
   SI     h= top - bot;
   string r= get_delimiter (s, fn, h);
-  box    b= text_box (ip, 0, r, fn, pen);
+  box    b= text_box_with_bg (ip, 0, r, fn, pen, bg, xkerning ());
   SI     x= -b->x1;
   SI     y= (top + bot - b->y1 - b->y2) >> 1;
   if (b->y2 - b->y1 < h) {

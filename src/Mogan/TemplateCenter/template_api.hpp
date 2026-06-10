@@ -1,7 +1,7 @@
 
 /******************************************************************************
  * MODULE     : template_api.hpp
- * DESCRIPTION: Gitee Releases API client for template metadata and downloads
+ * DESCRIPTION: liiistem.cn API client for template metadata and downloads
  * COPYRIGHT  : (C) 2026 Yuki Lu
  *******************************************************************************
  * This software falls under the GNU general public license version 3 or later.
@@ -29,7 +29,7 @@ class QJsonObject;
  * @brief liiistem.cn API client
  *
  * Responsibilities:
- * - Fetch template metadata from liiistem.cn API
+ * - Fetch template categories and templates from liiistem.cn API via POST
  * - Download template files (.tm)
  * - Handle network errors and retries
  * - Support offline fallback
@@ -41,30 +41,45 @@ public:
   explicit TemplateAPI (QObject* parent= nullptr);
   ~TemplateAPI ();
 
-  // Configuration (liiistem.cn API - no repository config needed)
+  // Configuration
   void    setApiBaseUrl (const QString& baseUrl);
   QString apiBaseUrl () const { return apiBaseUrl_; }
 
-  // API operations
-  void fetchMetadata ();
+  // API operations (POST based)
+  void fetchCategories ();
+  void fetchTemplates (const QString& categoryId= QString ());
+  void fetchRecommendTemplates ();
+
   void downloadTemplate (const QString& templateId, const QString& downloadUrl,
                          const QString& targetPath);
-  void cancelDownload (const QString& templateId);
 
-  // Metadata ETag for conditional requests
-  void    setMetadataEtag (const QString& etag);
-  QString lastMetadataEtag () const { return lastMetadataEtag_; }
+  void incrementDownloadCount (const QString& templateId);
+
+  /**
+   * @brief 终止下载并发射 downloadFailed（用户点击取消）。
+   *
+   * 用户在进度对话框中点击 Cancel 时调用。
+   * 发射 downloadFailed(templateId, "Download cancelled")，
+   * 使 TemplateManager::downloadTemplateSync() 中的 QEventLoop 立即退出。
+   */
+  void cancelDownload (const QString& templateId);
 
   // Network state
   bool isOnline () const;
   void setOfflineMode (bool offline);
 
 signals:
-  // Metadata fetch results (liiistem.cn API format)
-  void metadataLoaded (const QHash<QString, TemplateMetadataPtr>& metadata,
-                       const QList<TemplateCategory>&             categories);
-  void metadataLoadFailed (const QString& error);
-  void metadataNotModified ();
+  // Categories fetch results
+  void categoriesLoaded (const QList<TemplateCategory>& categories);
+  void categoriesLoadFailed (const QString& error);
+
+  // Templates fetch results
+  void templatesLoaded (const QHash<QString, TemplateMetadataPtr>& metadata);
+  void templatesLoadFailed (const QString& error);
+
+  void recommendTemplatesLoaded (
+      const QHash<QString, TemplateMetadataPtr>& metadata);
+  void recommendTemplatesLoadFailed (const QString& error);
 
   // Download progress
   void downloadProgress (const QString& templateId, qint64 bytesReceived,
@@ -75,29 +90,44 @@ signals:
   // Network state
   void networkStateChanged (bool isOnline);
 
+public:
+  // Response parsing (exposed for unit testing)
+  QList<TemplateCategory> parseCategoriesResponse (const QJsonValue& data);
+  QHash<QString, TemplateMetadataPtr>
+  parseTemplatesResponse (const QJsonValue& data);
+
 private slots:
-  void onMetadataReplyFinished ();
+  void onCategoriesReplyFinished ();
+  void onTemplatesReplyFinished ();
+  void onRecommendTemplatesReplyFinished ();
   void onDownloadProgress (qint64 bytesReceived, qint64 bytesTotal);
   void onDownloadFinished ();
-  void onNetworkError (QNetworkReply::NetworkError error);
 
 private:
   // API URL construction
-  QString metadataUrl () const;
-
-  // Response parsing (liiistem.cn API format with nested categories)
-  QHash<QString, TemplateMetadataPtr>
-  parseMetadataResponse (const QByteArray&        data,
-                         QList<TemplateCategory>& outCategories,
-                         bool*                    isValidResponse= nullptr);
+  QString categoriesUrl () const;
+  QString templatesUrl () const;
+  QString recommendTemplatesUrl () const;
+  QString downloadTemplatesUrl () const;
 
   // Helper to parse individual template objects
-  void parseTemplateObject (const QJsonObject& tmplObj,
-                            const QString&     defaultCategoryId,
+  void parseTemplateObject (const QJsonObject&                   tmplObj,
                             QHash<QString, TemplateMetadataPtr>& metadata);
 
   // Request management
   void setupRequestHeaders (QNetworkRequest& request);
+
+  /**
+   * @brief 静默终止下载，不发射任何信号（内部使用）。
+   *
+   * 在 downloadTemplate() 为同一 templateId 启动新请求前调用。
+   * 安静地终止旧的 QNetworkReply 并清理 downloadReplies_，
+   * 但不发射 downloadFailed，避免打断新下载流程。
+   */
+  void abortDownload (const QString& templateId);
+
+private:
+  bool abortAndRemoveReply (const QString& templateId);
 
 private:
   // API configuration
@@ -109,15 +139,12 @@ private:
 
   // Active requests
   QHash<QString, QPointer<QNetworkReply>> downloadReplies_;
-  QPointer<QNetworkReply>                 metadataReply_;
-
-  // Metadata ETag for conditional requests
-  QString metadataEtag_;     // ETag sent in If-None-Match
-  QString lastMetadataEtag_; // ETag received in last 200 response
+  QPointer<QNetworkReply>                 categoriesReply_;
+  QPointer<QNetworkReply>                 templatesReply_;
+  QPointer<QNetworkReply>                 recommendTemplatesReply_;
 
   // Default API endpoint
-  static constexpr const char* DEFAULT_API_BASE_URL=
-      "https://liiistem.cn/template-api";
+  static constexpr const char* DEFAULT_API_BASE_URL= "https://liiistem.cn";
 };
 
 #endif // TEMPLATE_API_HPP

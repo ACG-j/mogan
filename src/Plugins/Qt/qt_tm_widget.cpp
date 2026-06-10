@@ -41,21 +41,31 @@
 #include "config.h"
 #include "scheme.hpp"
 
+#include "qt_chat_controller.hpp"
 #include "qt_gui.hpp"
+#include "qt_pdf_reader_widget.hpp"
+#include "qt_pdf_toolbar.hpp"
 #include "qt_picture.hpp"
 #include "qt_renderer.hpp"
-#include "qt_startup_tab_widget.hpp"
 #include "qt_tm_widget.hpp"
 #include "qt_utilities.hpp"
+
+bool in_presentation_mode ();
+
+#if !IS_COMMUNITY
+#include "telemetry.hpp"
+#endif
 
 #include "QTMGuiHelper.hpp" // needed to connect()
 #include "QTMInteractiveInputHelper.hpp"
 #include "QTMInteractivePrompt.hpp"
 #include "QTMOAuth.hpp"
+#include "QTMStartupTabWidget.hpp"
 #include "QTMStyle.hpp" // qtstyle()
 #include "QTMTabPage.hpp"
 #include "QTMWindow.hpp"
 #include "new_view.hpp"
+#include "new_window.hpp"
 #include "preferences.hpp"
 #include "qt_dialogues.hpp"
 #include "qt_menu.hpp"
@@ -76,6 +86,32 @@ extern bool             texmacs_started;
 static bool
 is_startup_tab_file (const string& file) {
   return file == "tmfs://startup-tab";
+}
+
+/**
+ * @brief 判断给定文件路径是否指向聊天标签页 buffer。
+ * @param file 文件路径字符串。
+ * @return 若文件为 \c tmfs://chat-tab 则返回 true。
+ */
+static bool
+is_chat_tab_file (const string& file) {
+  return file == "tmfs://chat-tab";
+}
+
+static url
+window_view_for_widget (qt_tm_widget_rep* owner) {
+  if (owner == nullptr) return url_none ();
+
+  array<url> win_urls= windows_list ();
+  for (int i= 0; i < N (win_urls); ++i) {
+    tm_window win= concrete_window (win_urls[i]);
+    if (win != NULL && win->wid.rep == owner) {
+      url win_view= window_to_view (win_urls[i]);
+      if (!is_none (win_view)) return win_view;
+    }
+  }
+
+  return url_none ();
 }
 
 static bool
@@ -118,10 +154,22 @@ replaceActions (QWidget* dest, QList<QAction*>* src) {
   dest->setUpdatesEnabled (true);
 }
 
+static bool
+same_actions (QWidget* dest, QList<QAction*>* src) {
+  if (src == NULL || dest == NULL) return false;
+  QList<QAction*> current= dest->actions ();
+  if (current.count () != src->count ()) return false;
+  for (int i= 0; i < current.count (); ++i) {
+    if (current[i] != (*src)[i]) return false;
+  }
+  return true;
+}
+
 static void
 replaceButtons (QToolBar* dest, QList<QAction*>* src) {
   if (src == NULL || dest == NULL)
     TM_FAILED ("replaceButtons expects valid objects");
+  if (same_actions (dest, src)) return;
   dest->setUpdatesEnabled (false);
   bool visible= dest->isVisible ();
   if (visible) dest->hide (); // TRICK: to avoid flicker of the dest widget
@@ -157,14 +205,19 @@ QTMInteractiveInputHelper::commit (int result) {
 
 qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     : qt_window_widget_rep (new QTMWindow (0), "popup", _quit), helper (this),
-      prompt (NULL), full_screen (false), menuToolBarVisibleCache (false),
-      titleBarVisibleCache (false), scmNotificationBar (nullptr),
-      loginButton (nullptr), vipButton (nullptr), m_loginDialog (nullptr),
-      avatarLabel (nullptr), nameLabel (nullptr), accountIdLabel (nullptr),
-      membershipPeriodLabel (nullptr), membershipTitleLabel (nullptr),
-      loginActionButton (nullptr), logoutButton (nullptr), m_userId (""),
-      m_memberType (""), m_currentScmNotificationItem (""),
-      startupContentWidget (nullptr), startupTabMode (false) {
+      prompt (NULL), full_screen (false), is_presentation (false),
+      menuToolBarVisibleCache (false), titleBarVisibleCache (false),
+      scmNotificationBar (nullptr), loginButton (nullptr), vipButton (nullptr),
+      m_loginDialog (nullptr), avatarLabel (nullptr), nameLabel (nullptr),
+      accountIdLabel (nullptr), membershipPeriodLabel (nullptr),
+      membershipTitleLabel (nullptr), loginActionButton (nullptr),
+      logoutButton (nullptr), m_userId (""), m_memberType (""),
+      m_currentScmNotificationItem (""), startupContentWidget (nullptr),
+      startupTabMode (false), pdfViewerWidget (nullptr), pdfTabMode (false),
+      currentPdfPath (""), lastLoadedPdfPath (""), chatContentWidget (nullptr),
+      chatTabMode (false), chatSideDock (nullptr),
+      chatSidebarToggleBtn (nullptr), chatSidebarMode (false),
+      chatSidebarModeMemory_ (false), centralWidgetUpdatesFrozen_ (false) {
   type= texmacs_widget;
 
   main_widget= concrete (::glue_widget (true, true, 1, 1));
@@ -267,17 +320,6 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
   windowBar->setFixedHeight (titleBarHeight);
 
   // 系统按钮（图标来自 3rdparty/qwindowkitty/src/styles/styles.qrc）
-  auto iconBtn= new QWK::WindowButton (windowBar);
-  iconBtn->setFlat (true);
-  iconBtn->setFocusPolicy (Qt::NoFocus);
-  iconBtn->setIcon (QIcon (":/app/stem.png"));
-  iconBtn->setObjectName ("icon-button");
-  iconBtn->setIconSize (QSize (int (30 * scale), int (30 * scale)));
-  windowBar->setIconButton (iconBtn);
-  iconBtn->setAttribute (Qt::WA_TransparentForMouseEvents, true);
-  iconBtn->setCursor (Qt::ArrowCursor);
-  iconBtn->setContextMenuPolicy (Qt::NoContextMenu);
-
   auto pinBtn= new QWK::WindowButton (windowBar);
   pinBtn->setCheckable (true);
   pinBtn->setFlat (true);
@@ -420,11 +462,29 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     windowAgent->setHitTestVisible (vipButton, true);
   }
 
-  // 点击事件：跳转到会员购买页面
+  // 点击事件：跳转到会员购买页面（未登录时先触发登录）
   QObject::connect (vipButton, &QPushButton::clicked, [this] () {
-    string pricingUrl=
-        as_string (call ("account-oauth2-config", "pricing-url"));
-    QDesktopServices::openUrl (QUrl (to_qstring (pricingUrl)));
+    if (is_community_stem ()) {
+      string pricingUrl=
+          as_string (call ("account-oauth2-config", "click-return-liii-url"));
+      QDesktopServices::openUrl (QUrl (to_qstring (pricingUrl)));
+      return;
+    }
+
+    if (is_server_started ()) {
+      tm_server_rep* server=
+          dynamic_cast<tm_server_rep*> (get_server ().operator->());
+      if (server && server->getAccount () &&
+          server->getAccount ()->isLoggedIn ()) {
+#if !IS_COMMUNITY
+        telemetry_track ("VIP_CLICK", "'((\"mode\" . \"upgrade\"))");
+#endif
+        openRenewalPage ();
+      }
+      else {
+        checkLocalTokenAndLogin ();
+      }
+    }
   });
 
   // 初始设置VIP按钮可见性：商业版且（未登录或普通用户/体验会员）时显示
@@ -606,6 +666,20 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     menuToolBar->setMovable (false);
   }
 
+  // PDF 工具栏（仅在 PDF 标签页模式下可见）
+  {
+    int h     = DpiUtils::scaled (32);
+    pdfToolBar= new PdfToolBar ("pdf toolbar", mw);
+    mw->addToolBar (pdfToolBar);
+    pdfToolBar->setIconSize (
+        QSize (DpiUtils::scaled (16), DpiUtils::scaled (16)));
+    pdfToolBar->setStyleSheet (
+        QString ("QToolBar#pdfToolBar { padding: 0px; margin: 0px; "
+                 "border: none; min-height: %1px; max-height: %1px; }")
+            .arg (h));
+    pdfToolBar->setVisible (false);
+  }
+
   QWidget* cw= new QWidget ();
   cw->setObjectName (
       "centralWidget"); // this is important for styling toolbars.
@@ -747,6 +821,66 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
   // auxiliaryWidget->setTitleBarWidget (new QWidget ()); // Disables title bar
   mw->addDockWidget (Qt::RightDockWidgetArea, auxiliaryWidget);
 
+  // 统一为所有 dock 分隔线添加可视边框
+  int borderWidth= DpiUtils::scaled (1);
+  mw->setStyleSheet (mw->styleSheet () +
+                     QString ("QMainWindow::separator { "
+                              "border-left: %1px solid rgba(0,0,0,0.12); }")
+                         .arg (borderWidth));
+
+  // AI 聊天侧边栏 Dock
+  chatSideDock= new QDockWidget ("AI Chat Sidebar", mw);
+  chatSideDock->setObjectName ("chatSideDock");
+  chatSideDock->setAllowedAreas (Qt::RightDockWidgetArea);
+  chatSideDock->setFeatures (QDockWidget::DockWidgetClosable);
+  chatSideDock->setFloating (false);
+  chatSideDock->setTitleBarWidget (new QWidget ()); // 禁用标题栏
+  chatSideDock->setMinimumSize (DpiUtils::scaled (320), 0);
+  chatSideDock->setVisible (false);
+  mw->addDockWidget (Qt::RightDockWidgetArea, chatSideDock);
+
+  // 文档区域右上角浮动新建对话按钮
+  chatSidebarToggleBtn= new QPushButton (cw);
+  chatSidebarToggleBtn->setObjectName ("chat-tab-collapse-btn");
+  chatSidebarToggleBtn->setFocusPolicy (Qt::NoFocus);
+  chatSidebarToggleBtn->setCursor (Qt::PointingHandCursor);
+  chatSidebarToggleBtn->setIcon (QIcon (":llm-chat/addchat.svg"));
+  chatSidebarToggleBtn->setIconSize (
+      QSize (DpiUtils::scaled (20), DpiUtils::scaled (20)));
+  chatSidebarToggleBtn->setFixedSize (DpiUtils::scaled (40),
+                                      DpiUtils::scaled (40));
+  chatSidebarToggleBtn->setStyleSheet (
+      QString ("QPushButton { border: none; border-radius: %1px; }")
+          .arg (DpiUtils::scaled (20)));
+  chatSidebarToggleBtn->hide ();
+
+  // 使用 QObject 辅助类处理 central widget 的 resize 事件以更新按钮位置
+  class ChatSidebarBtnPositioner : public QObject {
+  public:
+    ChatSidebarBtnPositioner (QPushButton* btn, QWidget* parent,
+                              qt_tm_widget_rep* widget)
+        : QObject (parent), button_ (btn), parent_ (parent), widget_ (widget) {}
+    bool eventFilter (QObject* obj, QEvent* event) override {
+      if (obj == parent_ && event->type () == QEvent::Resize) {
+        widget_->position_chat_sidebar_button ();
+      }
+      return QObject::eventFilter (obj, event);
+    }
+
+  private:
+    QPushButton*      button_;
+    QWidget*          parent_;
+    qt_tm_widget_rep* widget_;
+  };
+  cw->installEventFilter (
+      new ChatSidebarBtnPositioner (chatSidebarToggleBtn, cw, this));
+
+  QObject::connect (chatSidebarToggleBtn, &QPushButton::clicked, [this] () {
+    chatSidebarMode       = !chatSidebarMode;
+    chatSidebarModeMemory_= chatSidebarMode;
+    sync_chat_sidebar_mode ();
+  });
+
   // FIXME? add DockWidgetClosable and connect the close signal
   // to the scheme code
   //  QObject::connect(sideDock, SIGNAL(closeEvent()),
@@ -772,6 +906,9 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
   QColor   bgcol= to_qcolor (tm_background);
   pal.setColor (QPalette::Mid, bgcol);
   mainwindow ()->setPalette (pal);
+
+  // 强制刷新一次可见性状态，确保浮动按钮等控件初始状态正确
+  update_visibility ();
 
   // 连接登录状态变化信号
   if (is_server_started ()) {
@@ -821,6 +958,19 @@ qt_tm_widget_rep::~qt_tm_widget_rep () {
   if (startupContentWidget) {
     delete startupContentWidget;
   }
+
+  // delete pdf viewer widget
+  if (pdfViewerWidget) {
+    delete pdfViewerWidget;
+  }
+  /// 清理聊天侧边栏 dock 中的 widget 引用，避免悬垂
+  if (chatSideDock) {
+    chatSideDock->setWidget (nullptr);
+  }
+  /// delete chat content widget
+  if (chatContentWidget) {
+    delete chatContentWidget;
+  }
 }
 
 void
@@ -867,7 +1017,9 @@ qt_tm_widget_rep::plain_window_widget (string name, command _quit, int b) {
 static void
 show_widget_in_layout (QWidget* widget, QLayout* layout) {
   if (!widget || !layout) return;
-  if (layout->indexOf (widget) < 0) {
+  int index= layout->indexOf (widget);
+  if (index >= 0 && widget->isVisible ()) return;
+  if (index < 0) {
     layout->addWidget (widget);
   }
   widget->show ();
@@ -879,6 +1031,19 @@ hide_widget_from_layout (QWidget* widget, QLayout* layout) {
   widget->hide ();
   if (layout->indexOf (widget) >= 0) {
     layout->removeWidget (widget);
+  }
+}
+
+void
+qt_tm_widget_rep::set_central_widget_updates_frozen (bool frozen) {
+  QWidget* cw= centralwidget ();
+  if (!cw || centralWidgetUpdatesFrozen_ == frozen) return;
+
+  centralWidgetUpdatesFrozen_= frozen;
+  cw->setUpdatesEnabled (!frozen);
+  if (!frozen) {
+    if (cw->layout ()) cw->layout ()->invalidate ();
+    cw->update ();
   }
 }
 
@@ -897,29 +1062,292 @@ qt_tm_widget_rep::sync_startup_tab_mode () {
 
   if (startupTabMode) {
     // Show Backstage/Startup view
+    // 进入首页前保存并关闭 dock
+    if (chatSidebarMode) {
+      chatSidebarModeMemory_= true;
+      chatSidebarMode       = false;
+      sync_chat_sidebar_mode ();
+    }
+
     hide_widget_from_layout (editorWidget, layout);
+    hide_widget_from_layout (pdfViewerWidget, layout);
+    hide_widget_from_layout (chatContentWidget, layout);
+
+    // Disconnect toolbar when leaving PDF mode
+    pdfToolBar->disconnectFrom ();
 
     update_visibility ();
 
     if (!startupContentWidget) {
-      startupContentWidget= new QTStartupTabWidget (centralwidget ());
+      startupContentWidget= new QTMStartupTabWidget (centralwidget ());
     }
     show_widget_in_layout (startupContentWidget, layout);
     startupContentWidget->setFocus (Qt::OtherFocusReason);
   }
-  else {
-    // Show normal editor view
+  else if (pdfTabMode) {
+    // Show PDF viewer
+    hide_widget_from_layout (editorWidget, layout);
     hide_widget_from_layout (startupContentWidget, layout);
-    show_widget_in_layout (editorWidget, layout);
+    hide_widget_from_layout (chatContentWidget, layout);
 
     update_visibility ();
 
-    if (scrollarea ())
-      scrollarea ()->surface ()->setSizePolicy (QSizePolicy::Fixed,
-                                                QSizePolicy::Fixed);
-    url currentView= get_current_view_safe ();
-    if (!is_none (currentView)) send_keyboard_focus (abstract (main_widget));
+    if (!pdfViewerWidget) {
+      pdfViewerWidget= new PDFReaderWidget (centralwidget ());
+    }
+    show_widget_in_layout (pdfViewerWidget, layout);
+    pdfViewerWidget->setFocus (Qt::OtherFocusReason);
+
+    // Connect toolbar to the PDF reader
+    pdfToolBar->connectTo (pdfViewerWidget);
+
+    // Load PDF if path changed
+    if (!currentPdfPath.isEmpty () && currentPdfPath != lastLoadedPdfPath) {
+      pdfViewerWidget->loadFromFile (currentPdfPath);
+      lastLoadedPdfPath= currentPdfPath;
+    }
   }
+  else {
+    // Show normal editor view (unless chat tab mode is active)
+    hide_widget_from_layout (startupContentWidget, layout);
+    hide_widget_from_layout (pdfViewerWidget, layout);
+
+    // Disconnect toolbar when leaving PDF mode
+    pdfToolBar->disconnectFrom ();
+
+    if (!chatTabMode) {
+      show_widget_in_layout (editorWidget, layout);
+
+      update_visibility ();
+
+      if (scrollarea ())
+        scrollarea ()->surface ()->setSizePolicy (QSizePolicy::Fixed,
+                                                  QSizePolicy::Fixed);
+      url currentView= get_current_view_safe ();
+      if (!is_none (currentView)) send_keyboard_focus (abstract (main_widget));
+    }
+    // 从首页切回文档时恢复 dock（Chat 标签页模式下不恢复，由 sync_chat_tab_mode
+    // 处理）
+    if (chatSidebarModeMemory_ && !chatSidebarMode && !chatTabMode) {
+      chatSidebarMode= true;
+      sync_chat_sidebar_mode ();
+    }
+  }
+}
+
+/**
+ * @brief 同步聊天标签页控件的可见性。
+ *
+ * 当 \ref chatTabMode 激活时，隐藏编辑器、启动页和 PDF
+ * 阅读器，然后显示 \ref chatContentWidget（按需创建）。
+ * 否则隐藏聊天控件，并在启动标签页模式未激活时恢复普通编辑器视图。
+ */
+void
+qt_tm_widget_rep::sync_chat_tab_mode () {
+  QWidget* editorWidget= main_widget->qwid;
+  QLayout* layout      = centralwidget ()->layout ();
+  if (!layout) return;
+
+  if (chatTabMode) {
+    // Show Chat tab view
+    // 如果之前处于侧边栏模式，先关闭（记住用户选择，切回时恢复）
+    if (chatSidebarMode) {
+      chatSidebarModeMemory_= true;
+      chatSidebarMode       = false;
+      if (chatSideDock && chatContentWidget &&
+          chatSideDock->widget () == chatContentWidget) {
+        chatSideDock->setWidget (nullptr);
+        chatContentWidget->setParent (centralwidget ());
+        // 恢复内部对话列表显示（全屏模式需要），
+        // 尊重用户记忆的侧边栏展开/收缩状态
+        QTChatTabWidget* chatWidget=
+            qobject_cast<QTChatTabWidget*> (chatContentWidget);
+        if (chatWidget) {
+          // 先从 dock 模式的隐藏状态恢复，再根据用户记忆的状态设置
+          chatWidget->setSidebarVisible (true);
+          chatWidget->setSidebarCollapsed (
+              QTChatTabWidget::globalSidebarCollapsed ());
+          chatWidget->setCloseSidebarButtonVisible (false);
+        }
+      }
+      if (chatSideDock) chatSideDock->hide ();
+    }
+
+    hide_widget_from_layout (editorWidget, layout);
+    hide_widget_from_layout (startupContentWidget, layout);
+    hide_widget_from_layout (pdfViewerWidget, layout);
+
+    update_visibility ();
+
+    if (!chatContentWidget) {
+      chatContentWidget=
+          get_chat_controller ()->createView (centralwidget (), this);
+    }
+    show_widget_in_layout (chatContentWidget, layout);
+    chatContentWidget->setFocus (Qt::OtherFocusReason);
+  }
+  else {
+    // Show normal editor view only when no special tab mode is active
+    hide_widget_from_layout (chatContentWidget, layout);
+    if (!startupTabMode && !pdfTabMode) {
+      show_widget_in_layout (editorWidget, layout);
+
+      update_visibility ();
+
+      if (scrollarea ())
+        scrollarea ()->surface ()->setSizePolicy (QSizePolicy::Fixed,
+                                                  QSizePolicy::Fixed);
+      url currentView= get_current_view_safe ();
+      if (!is_none (currentView)) send_keyboard_focus (abstract (main_widget));
+    }
+    // 如果用户之前主动打开了侧边栏，从 Chat 标签页切回时恢复
+    // 注意：从首页切回时由 sync_startup_tab_mode() 负责恢复，这里不再重复处理
+    if (chatSidebarModeMemory_ && !chatSidebarMode && !startupTabMode) {
+      chatSidebarMode= true;
+      sync_chat_sidebar_mode ();
+    }
+  }
+}
+
+void
+qt_tm_widget_rep::position_chat_sidebar_button () {
+  if (!chatSidebarToggleBtn || !centralwidget ()) return;
+  QWidget* cw         = centralwidget ();
+  int      topMargin  = DpiUtils::scaled (12);
+  int      rightMargin= DpiUtils::scaled (20);
+  int      btnSize    = chatSidebarToggleBtn->width ();
+  int      cwW        = cw->width ();
+  int      cwH        = cw->height ();
+  if (cwW <= 0 || cwH <= 0) return; // 窗口尚未就绪
+  int x= cwW - btnSize - rightMargin;
+  int y= topMargin;
+  chatSidebarToggleBtn->move (x, y);
+}
+
+/**
+ * @brief 同步 AI 聊天侧边栏模式的可见性。
+ *
+ * 当 \ref chatSidebarMode 激活时，将 \ref chatContentWidget 放入右侧
+ * Dock 中显示，同时保持编辑器或 PDF 阅读器可见。
+ * 与 \ref chatTabMode 互斥。
+ */
+void
+qt_tm_widget_rep::sync_chat_sidebar_mode () {
+  QWidget* editorWidget= main_widget->qwid;
+  QLayout* layout      = centralwidget ()->layout ();
+  if (!layout) return;
+
+  if (chatSidebarMode) {
+    // 确保不与全屏聊天模式同时存在
+    if (chatTabMode) {
+      chatTabMode= false;
+      sync_chat_tab_mode ();
+    }
+
+    // AI 侧边栏与辅助窗口共用右侧 dock 区域；打开 AI 侧边栏时，
+    // 也要同步关闭辅助窗口，避免两个 dock 纵向堆叠。
+    if (visibility[11] && auxiliaryWidget && auxiliaryWidget->isVisible ()) {
+      visibility[11]= false;
+      auxiliaryWidget->close ();
+    }
+
+    // 确保聊天控件已创建
+    if (!chatContentWidget) {
+      chatContentWidget=
+          get_chat_controller ()->createView (centralwidget (), this);
+    }
+
+    // 如果控件当前在中央布局中，先移除
+    if (layout->indexOf (chatContentWidget) >= 0) {
+      hide_widget_from_layout (chatContentWidget, layout);
+    }
+
+    // 放入侧边栏 dock
+    if (chatSideDock->widget () != chatContentWidget) {
+      chatContentWidget->setParent (chatSideDock);
+      chatSideDock->setWidget (chatContentWidget);
+    }
+
+    // 侧边栏模式：只显示对话区域，隐藏内部对话列表
+    QTChatTabWidget* chatWidget=
+        qobject_cast<QTChatTabWidget*> (chatContentWidget);
+    if (chatWidget) {
+      chatWidget->setSidebarVisible (false);
+      chatWidget->setCloseSidebarButtonVisible (true);
+      // 连接关闭按钮信号（先断开所有旧连接，避免重复触发）
+      QObject::disconnect (chatWidget, &QTChatTabWidget::closeSidebarRequested,
+                           nullptr, nullptr);
+      QObject::connect (chatWidget, &QTChatTabWidget::closeSidebarRequested,
+                        [this] () {
+                          chatSidebarMode       = false;
+                          chatSidebarModeMemory_= false;
+                          sync_chat_sidebar_mode ();
+                        });
+    }
+
+    chatSideDock->show ();
+    chatContentWidget->show ();
+    // 焦点切到聊天输入框
+    if (chatWidget && chatWidget->activeConversation ()) {
+      chatWidget->activeConversation ()->focusInput ();
+    }
+    else {
+      chatContentWidget->setFocus (Qt::OtherFocusReason);
+    }
+
+    // 设置 dock 宽度为屏幕宽度的 1/3
+    QMainWindow* mw= mainwindow ();
+    if (mw) {
+      int dockWidth= qMax (DpiUtils::scaled (280), mw->width () / 3);
+      mw->resizeDocks ({chatSideDock}, {dockWidth}, Qt::Horizontal);
+    }
+
+    // 确保编辑器或 PDF 阅读器可见
+    if (startupTabMode) {
+      hide_widget_from_layout (editorWidget, layout);
+      hide_widget_from_layout (pdfViewerWidget, layout);
+    }
+    else if (pdfTabMode) {
+      hide_widget_from_layout (editorWidget, layout);
+      show_widget_in_layout (pdfViewerWidget, layout);
+    }
+    else {
+      hide_widget_from_layout (pdfViewerWidget, layout);
+      show_widget_in_layout (editorWidget, layout);
+    }
+  }
+  else {
+    // 隐藏侧边栏 dock
+    if (chatSideDock) chatSideDock->hide ();
+
+    // 如果控件在 dock 中，先移回中央 widget（隐藏状态）
+    if (chatContentWidget && chatSideDock &&
+        chatSideDock->widget () == chatContentWidget) {
+      chatSideDock->setWidget (nullptr);
+      chatContentWidget->setParent (centralwidget ());
+      // 不加入布局，保持隐藏
+      chatContentWidget->hide ();
+
+      // 恢复内部对话列表显示（全屏模式需要），
+      // 尊重用户记忆的侧边栏展开/收缩状态
+      QTChatTabWidget* chatWidget=
+          qobject_cast<QTChatTabWidget*> (chatContentWidget);
+      if (chatWidget) {
+        // 先从 dock 模式的隐藏状态恢复，再根据用户记忆的状态设置
+        chatWidget->setSidebarVisible (true);
+        chatWidget->setSidebarCollapsed (
+            QTChatTabWidget::globalSidebarCollapsed ());
+        chatWidget->setCloseSidebarButtonVisible (false);
+      }
+    }
+
+    // 恢复焦点到当前可见的编辑器或 PDF 阅读器
+    if (pdfTabMode && pdfViewerWidget)
+      pdfViewerWidget->setFocus (Qt::OtherFocusReason);
+    else if (editorWidget) editorWidget->setFocus (Qt::OtherFocusReason);
+  }
+
+  update_visibility ();
 }
 
 void
@@ -938,22 +1366,24 @@ qt_tm_widget_rep::update_visibility () {
   bool old_auxVisibility   = auxiliaryWidget->isVisible ();
   bool old_tabVisibility=
       tabPageContainer ? tabPageContainer->isVisible () : false;
-  bool old_statusVisibility= mainwindow ()->statusBar ()->isVisible ();
-  bool old_titleVisibility = windowAgent->titleBar ()->isVisible ();
+  bool old_statusVisibility    = mainwindow ()->statusBar ()->isVisible ();
+  bool old_titleVisibility     = windowAgent->titleBar ()->isVisible ();
+  bool old_pdfToolBarVisibility= pdfToolBar->isVisible ();
 
-  bool new_mainVisibility  = visibility[1] && visibility[0];
-  bool new_menuVisibility  = visibility[0];
-  bool new_modeVisibility  = visibility[2] && visibility[0];
-  bool new_focusVisibility = visibility[3] && visibility[0];
-  bool new_userVisibility  = visibility[4] && visibility[0];
-  bool new_statusVisibility= visibility[5];
-  bool new_sideVisibility  = visibility[6];
-  bool new_leftVisibility  = visibility[7];
-  bool new_bottomVisibility= visibility[8];
-  bool new_extraVisibility = visibility[9];
-  bool new_tabVisibility   = visibility[10] && visibility[0];
-  bool new_auxVisibility   = visibility[11];
-  bool new_titleVisibility = visibility[0];
+  bool new_mainVisibility      = visibility[1] && visibility[0];
+  bool new_menuVisibility      = visibility[0];
+  bool new_modeVisibility      = visibility[2] && visibility[0];
+  bool new_focusVisibility     = visibility[3] && visibility[0];
+  bool new_userVisibility      = visibility[4] && visibility[0];
+  bool new_statusVisibility    = visibility[5];
+  bool new_sideVisibility      = visibility[6];
+  bool new_leftVisibility      = visibility[7];
+  bool new_bottomVisibility    = visibility[8];
+  bool new_extraVisibility     = visibility[9];
+  bool new_tabVisibility       = visibility[10] && visibility[0];
+  bool new_auxVisibility       = visibility[11];
+  bool new_titleVisibility     = visibility[0];
+  bool new_pdfToolBarVisibility= false;
 
   if (startupTabMode) {
     new_mainVisibility  = false;
@@ -971,16 +1401,53 @@ qt_tm_widget_rep::update_visibility () {
     new_titleVisibility = true;
   }
 
-  if (XOR (old_mainVisibility, new_mainVisibility))
+  if (chatTabMode) {
+    new_mainVisibility  = false;
+    new_menuVisibility  = false;
+    new_modeVisibility  = true;
+    new_focusVisibility = false;
+    new_userVisibility  = false;
+    new_statusVisibility= false;
+    new_sideVisibility  = false;
+    new_leftVisibility  = false;
+    new_bottomVisibility= false;
+    new_extraVisibility = false;
+    new_auxVisibility   = false;
+    new_tabVisibility   = true;
+    new_titleVisibility = true;
+  }
+
+  if (pdfTabMode) {
+    new_mainVisibility      = false;
+    new_menuVisibility      = false;
+    new_modeVisibility      = false;
+    new_focusVisibility     = false;
+    new_userVisibility      = false;
+    new_statusVisibility    = false;
+    new_sideVisibility      = false;
+    new_leftVisibility      = false;
+    new_bottomVisibility    = false;
+    new_extraVisibility     = false;
+    new_auxVisibility       = false;
+    new_tabVisibility       = true;
+    new_titleVisibility     = true;
+    new_pdfToolBarVisibility= true;
+  }
+  if (XOR (old_mainVisibility, new_mainVisibility)) {
     mainToolBar->setVisible (new_mainVisibility);
-  if (XOR (old_menuVisibility, new_menuVisibility))
+  }
+  if (XOR (old_menuVisibility, new_menuVisibility)) {
     menuToolBar->setVisible (new_menuVisibility);
-  if (XOR (old_modeVisibility, new_modeVisibility))
+  }
+  if (XOR (old_modeVisibility, new_modeVisibility)) {
     modeToolBar->setVisible (new_modeVisibility);
-  if (XOR (old_focusVisibility, new_focusVisibility))
+  }
+  if (XOR (old_focusVisibility, new_focusVisibility)) {
     focusToolBar->setVisible (new_focusVisibility);
-  if (XOR (old_userVisibility, new_userVisibility))
+  }
+  if (XOR (old_userVisibility, new_userVisibility)) {
     userToolBar->setVisible (new_userVisibility);
+  }
   if (XOR (old_sideVisibility, new_sideVisibility))
     sideTools->setVisible (new_sideVisibility);
   if (XOR (old_leftVisibility, new_leftVisibility))
@@ -995,8 +1462,35 @@ qt_tm_widget_rep::update_visibility () {
     tabPageContainer->setVisible (new_tabVisibility);
   if (XOR (old_titleVisibility, new_titleVisibility))
     windowAgent->titleBar ()->setVisible (new_titleVisibility);
-  if (XOR (old_statusVisibility, new_statusVisibility))
+  if (XOR (old_statusVisibility, new_statusVisibility)) {
     mainwindow ()->statusBar ()->setVisible (new_statusVisibility);
+  }
+  if (XOR (old_pdfToolBarVisibility, new_pdfToolBarVisibility)) {
+    pdfToolBar->setVisible (new_pdfToolBarVisibility);
+  }
+
+  // AI 聊天侧边栏浮动按钮可见性
+  if (chatSidebarToggleBtn) {
+    bool shouldShow= !chatTabMode && !chatSidebarMode && !startupTabMode;
+    chatSidebarToggleBtn->setVisible (shouldShow);
+    if (shouldShow) {
+      chatSidebarToggleBtn->raise ();
+      position_chat_sidebar_button ();
+      // 动态 tooltip：已有会话时显示 "Open AI Chat"，否则显示 "New AI Chat"
+      ChatController* ctrl       = get_chat_controller ();
+      bool            hasSessions= ctrl->sessionManager ().sessionCount () > 0;
+#ifdef Q_OS_MACOS
+      QString shortcutHint= " (\xe2\x8c\x98"
+                            "J)";
+#else
+      QString shortcutHint= " (Ctrl+J)";
+#endif
+      chatSidebarToggleBtn->setToolTip ((hasSessions
+                                             ? qt_translate ("Open AI Chat")
+                                             : qt_translate ("New AI Chat")) +
+                                        shortcutHint);
+    }
+  }
 
 // #if 0
 #ifdef UNIFIED_TOOLBAR
@@ -1157,8 +1651,23 @@ qt_tm_widget_rep::send (slot s, blackbox val) {
   } break;
   case SLOT_AUXILIARY_WIDGET_VISIBILITY: {
     check_type<bool> (val, s);
-    visibility[11]= open_box<bool> (val);
+    bool visible= open_box<bool> (val);
+    // 辅助窗口与 AI 侧边栏共用右侧 dock 区域；打开辅助窗口时直接关闭
+    // AI 侧边栏，避免两个 dock 纵向堆叠把侧边栏挤下去。
+    if (visible && chatSidebarMode) {
+      chatSidebarMode       = false;
+      chatSidebarModeMemory_= false;
+      sync_chat_sidebar_mode ();
+    }
+    visibility[11]= visible;
     update_visibility ();
+  } break;
+  case SLOT_CHAT_SIDEBAR_VISIBILITY: {
+    check_type<bool> (val, s);
+    bool show             = open_box<bool> (val);
+    chatSidebarMode       = show;
+    chatSidebarModeMemory_= show;
+    sync_chat_sidebar_mode ();
   } break;
   case SLOT_AUXILIARY_WIDGET: {
     check_type<string> (val, s);
@@ -1220,8 +1729,17 @@ qt_tm_widget_rep::send (slot s, blackbox val) {
     string file= open_box<string> (val);
     if (DEBUG_QT_WIDGETS) debug_widgets << "\tFile: " << file << LF;
     mainwindow ()->setWindowFilePath (utf8_to_qstring (file));
-    startupTabMode= is_startup_tab_file (file);
+    currentEditorFile= file;
+    startupTabMode   = is_startup_tab_file (file);
+    pdfTabMode       = is_pdf_tab_file (file);
+    if (pdfTabMode) {
+      currentPdfPath= utf8_to_qstring (file);
+    }
+    chatTabMode= is_chat_tab_file (file);
     sync_startup_tab_mode ();
+    sync_chat_tab_mode ();
+    sync_chat_sidebar_mode ();
+    set_central_widget_updates_frozen (false);
   } break;
   case SLOT_POSITION: {
     check_type<coord2> (val, s);
@@ -1319,6 +1837,10 @@ qt_tm_widget_rep::query (slot s, int type_id) {
   case SLOT_AUXILIARY_WIDGET_VISIBILITY:
     check_type_id<bool> (type_id, s);
     return close_box<bool> (visibility[11]);
+
+  case SLOT_CHAT_SIDEBAR_VISIBILITY:
+    check_type_id<bool> (type_id, s);
+    return close_box<bool> (chatSidebarMode);
 
   case SLOT_INTERACTIVE_INPUT: {
     check_type_id<string> (type_id, s);
@@ -1421,8 +1943,22 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
   case SLOT_SCROLLABLE: {
     check_type_void (index, s);
 
-    QWidget* q= main_widget->qwid;
-    QLayout* l= centralwidget ()->layout ();
+    QWidget*  q         = main_widget->qwid;
+    QLayout*  l         = centralwidget ()->layout ();
+    qt_widget nextWidget= concrete (w);
+    bool      isGluePlaceholder=
+        !is_nil (nextWidget) && nextWidget->type == qt_widget_rep::glue_widget;
+    bool hasVisibleCentralContent=
+        (q && (l->indexOf (q) >= 0 || q->isVisible ())) ||
+        (startupContentWidget && (l->indexOf (startupContentWidget) >= 0 ||
+                                  startupContentWidget->isVisible ())) ||
+        (pdfViewerWidget && (l->indexOf (pdfViewerWidget) >= 0 ||
+                             pdfViewerWidget->isVisible ())) ||
+        (chatContentWidget && (l->indexOf (chatContentWidget) >= 0 ||
+                               chatContentWidget->isVisible ()));
+    if (!isGluePlaceholder && hasVisibleCentralContent) {
+      set_central_widget_updates_frozen (true);
+    }
     if (q && l->indexOf (q) >= 0) {
       l->removeWidget (q);
       q->hide (); // 隐藏旧的 widget
@@ -1436,6 +1972,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_MAIN_MENU:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       waiting_main_menu_widget= concrete (w);
       if (menu_count <= 0) install_main_menu ();
@@ -1447,6 +1984,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_MAIN_ICONS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       main_icons_widget    = concrete (w);
       QList<QAction*>* list= main_icons_widget->get_qactionlist ();
@@ -1475,6 +2013,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_NOTIFICATION_BAR:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       notification_bar_widget     = concrete (w);
       QList<QAction*>* action_list= notification_bar_widget->get_qactionlist ();
@@ -1536,6 +2075,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_FOCUS_ICONS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       bool can_update= true;
 #if (QT_VERSION >= 0x050000)
@@ -1565,6 +2105,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_USER_ICONS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       user_icons_widget    = concrete (w);
       QList<QAction*>* list= user_icons_widget->get_qactionlist ();
@@ -1577,6 +2118,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_SIDE_TOOLS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       side_tools_widget   = concrete (w);
       QWidget* new_qwidget= side_tools_widget->as_qwidget ();
@@ -1597,6 +2139,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_LEFT_TOOLS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       left_tools_widget   = concrete (w);
       QWidget* new_qwidget= left_tools_widget->as_qwidget ();
@@ -1617,6 +2160,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_BOTTOM_TOOLS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       bottom_tools_widget = concrete (w);
       QWidget* new_qwidget= bottom_tools_widget->as_qwidget ();
@@ -1637,6 +2181,7 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_EXTRA_TOOLS:
     check_type_void (index, s);
+    if (startupTabMode || chatTabMode) break;
     {
       extra_tools_widget  = concrete (w);
       QWidget* new_qwidget= extra_tools_widget->as_qwidget ();
@@ -1674,8 +2219,9 @@ void set_standard_style_sheet (QWidget* w);
 
 void
 qt_tm_widget_rep::set_full_screen (bool flag) {
-  full_screen = flag;
-  QWidget* win= mainwindow ()->window ();
+  bool was_presentation= is_presentation;
+  full_screen          = flag;
+  QWidget* win         = mainwindow ()->window ();
   if (win) {
     if (flag) {
       QPalette pal;
@@ -1706,18 +2252,34 @@ qt_tm_widget_rep::set_full_screen (bool flag) {
         titleBarVisibleCache= tb && tb->isVisible ();
         if (tb) tb->setVisible (false);
       }
-      bool is_slide_style= false;
-      try {
-        is_slide_style= as_bool (call ("in-presentation?"));
-      } catch (...) {
-        is_slide_style= false;
+      if (in_presentation_mode ()) {
+        is_presentation          = true;
+        QTMScrollView* scrollView= scrollarea ();
+        if (scrollView) {
+          QWidget* viewport= scrollView->viewport ();
+          if (viewport) {
+            QPalette vpal;
+            vpal.setColor (QPalette::Shadow, QColor (0, 0, 0));
+            vpal.setColor (QPalette::Mid, QColor (0, 0, 0));
+            viewport->setPalette (vpal);
+            viewport->setBackgroundRole (QPalette::Shadow);
+          }
+        }
+        if (chatSidebarToggleBtn) chatSidebarToggleBtn->hide ();
       }
-      bool           is_presentation_mode= !visibility[0];
-      QTMScrollView* scrollView          = scrollarea ();
-      if (scrollView && is_presentation_mode && is_slide_style) {
-        QWidget* viewport= scrollView->viewport ();
-        if (viewport) {
-          viewport->setBackgroundRole (QPalette::Shadow);
+      else if (was_presentation) {
+        is_presentation          = false;
+        QColor         bgcol     = to_qcolor (tm_background);
+        QTMScrollView* scrollView= scrollarea ();
+        if (scrollView) {
+          QWidget* viewport= scrollView->viewport ();
+          if (viewport) {
+            QPalette vpal;
+            vpal.setColor (QPalette::Mid, bgcol);
+            vpal.setColor (QPalette::Shadow, bgcol);
+            viewport->setPalette (vpal);
+            viewport->setBackgroundRole (QPalette::Mid);
+          }
         }
       }
     }
@@ -1744,19 +2306,20 @@ qt_tm_widget_rep::set_full_screen (bool flag) {
         QWidget* tb= windowAgent->titleBar ();
         if (tb) tb->setVisible (titleBarVisibleCache);
       }
-      bool is_slide_style= false;
-      try {
-        is_slide_style= as_bool (call ("in-presentation?"));
-      } catch (...) {
-        is_slide_style= false;
-      }
-      QTMScrollView* scrollView= scrollarea ();
-      if (scrollView && is_slide_style) {
-        QWidget* viewport= scrollView->viewport ();
-        if (viewport) {
-          viewport->setBackgroundRole (QPalette::Mid);
+      if (was_presentation) {
+        QTMScrollView* scrollView= scrollarea ();
+        if (scrollView) {
+          QWidget* viewport= scrollView->viewport ();
+          if (viewport) {
+            QPalette vpal;
+            vpal.setColor (QPalette::Mid, bgcol);
+            vpal.setColor (QPalette::Shadow, bgcol);
+            viewport->setPalette (vpal);
+            viewport->setBackgroundRole (QPalette::Mid);
+          }
         }
       }
+      is_presentation= false;
 #ifdef UNIFIED_TOOLBAR
       if (use_unified_toolbar) {
         mainwindow ()->centralWidget ()->layout ()->setContentsMargins (0, 1, 0,
@@ -1810,6 +2373,7 @@ qt_tm_embedded_widget_rep::send (slot s, blackbox val) {
   case SLOT_EXTRA_TOOLS_VISIBILITY:
   case SLOT_TAB_PAGES_VISIBILITY:
   case SLOT_AUXILIARY_WIDGET_VISIBILITY:
+  case SLOT_CHAT_SIDEBAR_VISIBILITY:
   case SLOT_NOTIFICATION_BAR:
   case SLOT_AUXILIARY_WIDGET:
   case SLOT_LEFT_FOOTER:
@@ -1870,6 +2434,7 @@ qt_tm_embedded_widget_rep::query (slot s, int type_id) {
   case SLOT_EXTRA_TOOLS_VISIBILITY:
   case SLOT_TAB_PAGES_VISIBILITY:
   case SLOT_AUXILIARY_WIDGET_VISIBILITY:
+  case SLOT_CHAT_SIDEBAR_VISIBILITY:
     check_type_id<bool> (type_id, s);
     return close_box<bool> (false);
 
@@ -1911,11 +2476,24 @@ qt_tm_embedded_widget_rep::write (slot s, blackbox index, widget w) {
     check_type_void (index, s);
     main_widget= w;
   } break;
-    /// FIXME: decide what to do with these for embedded widgets
   case SLOT_MAIN_MENU:
-  case SLOT_MAIN_ICONS:
   case SLOT_MODE_ICONS:
-  case SLOT_FOCUS_ICONS:
+  case SLOT_FOCUS_ICONS: {
+    if (!qwid) as_qwidget ();
+    QWidget* p= qwid;
+    while (p) {
+      if (QTChatTabWidget* chat= qobject_cast<QTChatTabWidget*> (p)) {
+        qt_tm_widget_rep* mainW= chat->parentTmWidget ();
+        if (mainW) {
+          mainW->write (s, index, w);
+          return;
+        }
+      }
+      p= p->parentWidget ();
+    }
+    qt_widget_rep::write (s, index, w);
+  } break;
+  case SLOT_MAIN_ICONS:
   case SLOT_USER_ICONS:
   case SLOT_SIDE_TOOLS:
   case SLOT_LEFT_TOOLS:
@@ -1956,6 +2534,21 @@ qt_tm_widget_rep::onAddTabRequested () {
     return;
   }
   lastCallTime= QTime::currentTime ();
+
+  // 顶部标签栏 “+” 来自当前主窗口，但焦点可能位于 AI Chat 输入框等非默认
+  // view（无 window 的 passive view，或挂在 embedded/aux window 上的 view）。
+  // 这种情况下直接执行 `(new-document)` 会在错误 view 上运行，甚至在
+  // switch-to-parent-window -> concrete_window 处失败。这里改为基于当前
+  // qt_tm_widget_rep 所属主窗口恢复到该窗口的默认 view，再触发新建。
+  url owner_view= window_view_for_widget (this);
+  if (!is_none (owner_view)) {
+    url cur_view= get_current_view_safe ();
+    url cur_window=
+        is_none (cur_view) ? url_none () : view_to_window (cur_view);
+    url owner_window= view_to_window (owner_view);
+    if (shouldResetCurrentViewForNewTab (cur_view, cur_window, owner_window))
+      set_current_view (owner_view);
+  }
 
   exec_delayed (scheme_cmd ("(new-document)"));
 }
@@ -2156,6 +2749,9 @@ qt_tm_widget_rep::setupLoginDialog (QWK::LoginDialog* loginDialog) {
     else {
       // 打开会员购买/续费链接
       qDebug ("打开会员购买/续费链接");
+#if !IS_COMMUNITY
+      telemetry_track ("VIP_CLICK", "'((\"mode\" . \"activate\"))");
+#endif
       openRenewalPage ();
     }
   });
@@ -2210,6 +2806,16 @@ void
 qt_tm_widget_rep::refreshScmNotificationBar () {
   if (!has_current_window ()) return;
   call ("update-menus");
+}
+
+bool
+qt_tm_widget_rep::shouldResetCurrentViewForNewTab (url currentView,
+                                                   url currentWindow,
+                                                   url ownerWindow) {
+  if (is_none (ownerWindow)) return false;
+  if (is_none (currentView) || is_none (currentWindow)) return true;
+  if (currentWindow != ownerWindow) return true;
+  return !is_tmfs_view_type (currentView, "default");
 }
 
 void

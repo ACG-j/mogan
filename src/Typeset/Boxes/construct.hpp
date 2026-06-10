@@ -14,6 +14,7 @@
 #include "Boxes/xkerning.hpp"
 #include "array.hpp"
 #include "boxes.hpp"
+#include "colors.hpp"
 #include "command.hpp"
 #include "font.hpp"
 #include "player.hpp"
@@ -109,9 +110,11 @@ box image_box (path ip, url u, SI w, SI h, int alpha, int px);
 box text_box (path ip, int pos, string s, font fn, pencil pen);
 box text_box_with_bg (path ip, int pos, string s, font fn, pencil pen, color bg,
                       xkerning xk);
-box delimiter_box (path ip, string s, font fn, pencil pen, SI y1, SI y2);
+box delimiter_box (path ip, string s, font fn, pencil pen, SI y1, SI y2,
+                   color bg= rgb_color (0, 0, 0, 0));
 box delimiter_box (path ip, string s, font fn, pencil pen, SI bot, SI top,
-                   SI mid, SI real_bot, SI real_top);
+                   SI mid, SI real_bot, SI real_top,
+                   color bg= rgb_color (0, 0, 0, 0));
 box big_operator_box (path ip, string s, font fn, pencil pen, int n);
 box wide_box (path ip, string s, font fn, pencil pen, SI width);
 box wide_stix_box (path ip, string s, font fn, pencil pen, SI width);
@@ -143,7 +146,7 @@ box case_box (path ip, array<tree> conds, array<box> bs);
 box scatter_box (path ip, array<box> bs, array<SI> x, array<SI> y,
                  bool bg_flag= false);
 box cell_box (path ip, box b, SI x0, SI y0, SI x1, SI y1, SI x2, SI y2, SI bl,
-              SI br, SI bb, SI bt, brush fg, brush bg);
+              SI br, SI bb, SI bt, SI db, SI ab, brush fg, brush bg);
 box remember_box (path ip, box b);
 box highlight_box (path ip, box b, box xb, ornament_parameters ps);
 box highlight_box (path ip, box b, SI w, brush col, brush sunc, brush shad);

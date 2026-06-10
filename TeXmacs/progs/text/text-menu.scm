@@ -717,8 +717,7 @@
   ("Date" (make-doc-data-element 'doc-date))
   ("Today" (begin (make-doc-data-element 'doc-date) (make 'date 0)))
   ("Miscellaneous" (make-doc-data-element 'doc-misc))
-  ("Note" (make-doc-data-element 'doc-note))
-  (-> "Cite TeXmacs" (link cite-texmacs-menu)))
+  ("Note" (make-doc-data-element 'doc-note)))
 
 (tm-menu (focus-title-hidden-menu)
   ("Running title" (make-doc-data-element 'doc-running-title))
@@ -743,9 +742,7 @@
       (link focus-title-menu)
       (-> "Hidden" (link focus-title-hidden-menu)))
   (=> (balloon (icon "tm_focus_prefs.xpm") "Title presentation options")
-      (link focus-title-option-menu))
-  (=> (balloon (icon "tm_like.xpm") "Cite TeXmacs")
-      (link cite-texmacs-menu)))
+      (link focus-title-option-menu)))
 
 (tm-menu (focus-ancestor-menu t)
   (:require (doc-title-context? t))
@@ -1274,11 +1271,11 @@
 
 (tm-define (standard-options l)
   (:require (in? l (numbered-unnumbered-append '(small-figure big-figure))))
-  (list "figure-captions-above"))
+  (list "figure-captions-above" "number-long-article"))
 
 (tm-define (standard-options l)
   (:require (in? l (numbered-unnumbered-append '(small-table big-table))))
-  (list "table-captions-above"))
+  (list "table-captions-above" "number-long-article"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Detached notes

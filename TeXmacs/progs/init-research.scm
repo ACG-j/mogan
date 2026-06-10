@@ -103,8 +103,6 @@
 (lazy-define (utils automate auto-tmfs) auto-load-help)
 (lazy-define (utils misc gui-keyboard) get-keyboard)
 (lazy-keyboard (utils automate auto-kbd) in-auto?)
-(define supports-email? (url-exists-in-path? "mmail"))
-(if supports-email? (use-modules (utils email email-tmfs)))
 ;;(display* "time: " (- (texmacs-time) boot-start) "\n")
 ;;(display* "memory: " (texmacs-memory) " bytes\n")
 
@@ -132,6 +130,7 @@
 (use-modules (texmacs menus notificationbar))
 (use-modules (texmacs menus tabpage-menu))
 (use-modules (startup-tab startup-tab))
+(use-modules (llm chat-loader))
 (lazy-define (texmacs menus file-menu) recent-file-list recent-directory-list)
 (lazy-define (texmacs menus view-menu) set-bottom-bar test-bottom-bar?)
 (tm-define (notify-set-attachment name key val) (noop))
@@ -149,7 +148,6 @@
            page-header-menu page-footer-menu page-numbering-menu
            page-break-menu)
 (lazy-menu (generic document-menu) document-menu
-           cite-texmacs-menu cite-texmacs-short-menu
            project-menu document-style-menu global-language-menu)
 (lazy-menu (generic document-part)
            preamble-menu document-part-menu project-manage-menu)
@@ -172,7 +170,7 @@
 (lazy-define (generic document-widgets) open-source-tree-preferences
              open-document-paragraph-format open-document-page-format
              open-document-metadata open-document-colors
-             open-page-headers-footers)
+             open-page-headers-footers open-document-page-number)
 (tm-property (open-search) (:interactive #t))
 (tm-property (open-replace) (:interactive #t))
 (tm-property (open-paragraph-format) (:interactive #t))
@@ -184,6 +182,7 @@
 (tm-property (open-document-metadata) (:interactive #t))
 (tm-property (open-document-colors) (:interactive #t))
 (tm-property (open-page-headers-footers) (:interactive #t))
+(tm-property (open-document-page-number) (:interactive #t))
 (tm-property (open-pattern-selector cmd w) (:interactive #t))
 (tm-property (open-gradient-selector cmd) (:interactive #t))
 (tm-property (open-background-picture-selector cmd) (:interactive #t))
@@ -358,7 +357,6 @@
 (lazy-define (convert latex latex-tools) latex-set-virtual-packages
              latex-has-style? latex-has-package?
              latex-has-texmacs-style? latex-has-texmacs-package?)
-(lazy-menu (convert latex tmtex-widgets) tmtex-menu)
 ;;(display* "time: " (- (texmacs-time) boot-start) "\n")
 ;;(display* "memory: " (texmacs-memory) " bytes\n")
 
@@ -469,6 +467,18 @@
   (autosave-delayed))
 (delayed (:pause 30000)
   (auto-backup-delayed))
+(catch #t
+  (lambda ()
+    (use-modules (telemetry telemetry-utils))
+    (use-modules (telemetry telemetry-track))
+    (use-modules (telemetry init-telemetry))
+    (init-telemetry)
+    (track-event "OPEN" '()))
+  (lambda args
+    (let ((msg (string-append "[telemetry] error: init failed: "
+                              (object->string args) "\n")))
+      (display msg (current-error-port))
+      (force-output (current-error-port)))))
 (texmacs-banner)
 (display "Initialization done\n")
 

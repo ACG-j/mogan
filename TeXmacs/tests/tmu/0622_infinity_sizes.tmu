@@ -1,0 +1,18 @@
+<TMU|<tuple|1.1.0|2026.2.5>>
+
+<style|<tuple|generic|number-europe|preview-ref|chinese|table-captions-above>>
+
+<\body>
+  <\equation*>
+    f<around|(|n|)>=<choice|<tformat|<table|<row|<cell|<dfrac|n|2>,>|<cell|n<text|为偶数>,>>|<row|<cell|-<dfrac|n+1|2>,>|<cell|n<text|为奇数>.>>>>>
+  </equation*>
+
+  \;
+</body>
+
+<\initial>
+  <\collection>
+    <associate|page-screen-margin|false>
+    <associate|stem-doc-id|27342EC4-1C82-4300-8DCF-AB22AC2CD330>
+  </collection>
+</initial>

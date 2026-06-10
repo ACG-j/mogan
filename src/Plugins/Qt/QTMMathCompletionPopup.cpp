@@ -10,31 +10,56 @@
  ******************************************************************************/
 
 #include "QTMMathCompletionPopup.hpp"
+#include "qt_dpi_utils.hpp"
 #include "server.hpp"
 
-#include <QPainter>
-#include <QPen>
-#include <QTimer>
-#include <cmath>
+#include <QFrame>
+#include <QWindow>
+
+static constexpr int    kContainerBorderRadius= 6;
+static constexpr double kContainerBorderWidth = 1;
+static constexpr int    kContentMargin        = 2;
+#ifdef Q_OS_MAC
+static constexpr int kPositionOffsetX= 15;
+static constexpr int kPositionOffsetY= 15;
+#else
+static constexpr int kPositionOffsetX= 8;
+static constexpr int kPositionOffsetY= 8;
+#endif
 
 QTMMathCompletionPopup::QTMMathCompletionPopup (QWidget*              parent,
                                                 qt_simple_widget_rep* owner)
     : QWidget (parent), owner (owner), layout (nullptr) {
   setObjectName ("math_completion_popup");
-  setWindowFlags (Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+  setWindowFlags (Qt::ToolTip | Qt::FramelessWindowHint |
+                  Qt::WindowStaysOnTopHint);
   setAttribute (Qt::WA_ShowWithoutActivating);
+  setAttribute (Qt::WA_DeleteOnClose, false);
+  setAttribute (Qt::WA_TranslucentBackground);
   setMouseTracking (true);
   setFocusPolicy (Qt::NoFocus);
-  layout= new QVBoxLayout (this);
-  layout->setContentsMargins (0, 0, 0, 0);
+
+  installTopLevelWindowFilter ();
+
+  QVBoxLayout* mainLayout= new QVBoxLayout (this);
+  mainLayout->setSizeConstraint (QLayout::SetMinimumSize);
+  setLayout (mainLayout);
+
+  QFrame* container= new QFrame (this);
+  container->setObjectName ("math_completion_container");
+  container->setStyleSheet (
+      QString ("QFrame#math_completion_container { "
+               "border: %1px solid; "
+               "border-radius: %2px; }")
+          .arg (DpiUtils::scaledF (kContainerBorderWidth))
+          .arg (DpiUtils::scaled (kContainerBorderRadius)));
+  mainLayout->addWidget (container);
+
+  int margin= DpiUtils::scaled (kContentMargin);
+  layout    = new QVBoxLayout (container);
+  layout->setContentsMargins (margin, margin, margin, margin);
   layout->setSizeConstraint (QLayout::SetMinimumSize);
-  setLayout (layout);
-  // 阴影效果
-  QGraphicsDropShadowEffect* effect= new QGraphicsDropShadowEffect (this);
-  effect->setBlurRadius (40);
-  effect->setOffset (0, 4);
-  effect->setColor (QColor (0, 0, 0, 120));
-  this->setGraphicsEffect (effect);
+  container->setLayout (layout);
 }
 
 QTMMathCompletionPopup::~QTMMathCompletionPopup () {
@@ -62,7 +87,6 @@ QTMMathCompletionPopup::installEventFilterRecursively (QWidget* widget,
 
 void
 QTMMathCompletionPopup::cleanLayout () {
-  // 清空 Layout 中已有的内容
   QLayoutItem* item;
   while ((item= layout->takeAt (0)) != nullptr) {
     if (item->widget ()) {
@@ -70,30 +94,26 @@ QTMMathCompletionPopup::cleanLayout () {
     }
     delete item;
   }
-  // 如果布局为空，隐藏窗口
-  if (layout->count () == 0) {
-    this->hide ();
-  }
 }
 
 void
 QTMMathCompletionPopup::setWidget (QWidget* w) {
   if (w) {
-    cleanLayout ();
-    // 暂停绘制，防止闪烁
+    // 暂停绘制，防止 cleanLayout 和添加新 widget 之间闪烁
     this->setUpdatesEnabled (false);
 
-    w->setParent (this);
+    cleanLayout ();
+
+    w->setParent (layout->parentWidget ());
     layout->addWidget (w);
     installEventFilterRecursively (w, this);
-
-    // 提前显示组件，防止闪烁
     w->show ();
+
     this->adjustSize ();
 
     // 恢复绘制
     this->setUpdatesEnabled (true);
-    this->update ();
+    updatePosition ();
   }
 }
 
@@ -102,14 +122,22 @@ QTMMathCompletionPopup::showMathCompletions (struct cursor cu, double magf,
                                              int scroll_x, int scroll_y,
                                              int canvas_x) {
   cachePosition (cu, magf, scroll_x, scroll_y, canvas_x);
+
   int x, y;
   getCachedPosition (x, y);
-  QPoint topLeft (x, y);
-  move (topLeft);
+
+  if (!isVisible ()) {
+    move (x, y);
+    show ();
+  }
+  else {
+    QPoint cur= pos ();
+    if (cur.x () != x || cur.y () != y) {
+      move (x, y);
+    }
+  }
   raise ();
-  show ();
   this->adjustSize ();
-  QTimer::singleShot (0, this, [this] () { updatePosition (); });
 }
 
 void
@@ -127,17 +155,20 @@ QTMMathCompletionPopup::cachePosition (struct cursor cu, double magf,
 void
 QTMMathCompletionPopup::getCachedPosition (int& x, int& y) {
   QTMWidget* canvas= owner ? owner->canvas () : nullptr;
-  QPoint     cursor_pos;
-  QPoint     origin;
-  QPoint     surface_top_left;
   if (canvas && canvas->surface ()) {
-    cursor_pos      = canvas->cursorPos ();
-    origin          = canvas->origin ();
-    surface_top_left= canvas->surface ()->geometry ().topLeft ();
+    QPoint cursor_pos      = canvas->cursorPos ();
+    QPoint origin          = canvas->origin ();
+    QPoint surface_top_left= canvas->surface ()->geometry ().topLeft ();
+    QPoint local_pos (cursor_pos.x () - origin.x () + surface_top_left.x (),
+                      cursor_pos.y () - origin.y () + surface_top_left.y ());
+    QPoint global_pos= canvas->viewport ()->mapToGlobal (local_pos);
+    x                = global_pos.x () - DpiUtils::scaled (kPositionOffsetX);
+    y                = global_pos.y () - DpiUtils::scaled (kPositionOffsetY);
   }
-  x= cursor_pos.x () - origin.x () + surface_top_left.x ();
-  y= cursor_pos.y () - origin.y () + surface_top_left.y ();
-  y+= 10;
+  else {
+    x= 0;
+    y= 0;
+  }
 }
 
 void
@@ -154,27 +185,33 @@ QTMMathCompletionPopup::scrollBy (int x, int y) {
 }
 
 void
-QTMMathCompletionPopup::paintEvent (QPaintEvent* event) {
-  // 保持原有绘制
-  QPainter painter (this);
-  painter.setRenderHint (QPainter::Antialiasing);
-  // 绘制白色背景
-  painter.setPen (Qt::NoPen);
-  painter.setBrush (QColor (255, 255, 255, 255));
-  QRectF bgRect= this->rect ();
-  painter.drawRoundedRect (bgRect, 6, 6);
-  // 绘制黑色边框
-  QPen pen (Qt::black, 1.5);
-  painter.setPen (pen);
-  painter.setBrush (Qt::NoBrush);
-  QRectF rect= this->rect ();
-  rect.adjust (0.75, 0.75, -0.75, -0.75); // 居中描边
-  painter.drawRoundedRect (rect, 6, 6);   // 圆角
+QTMMathCompletionPopup::installTopLevelWindowFilter () {
+  // 监听所属顶层窗口的状态变化，当主窗口最小化/隐藏时自动隐藏 popup。
+  // 由于 popup 是独立顶层窗口（Qt::ToolTip），不会跟随主窗口自动隐藏。
+  QWidget* w= parentWidget ();
+  while (w) {
+    if (w->isWindow ()) {
+      w->installEventFilter (this);
+      break;
+    }
+    w= w->parentWidget ();
+  }
 }
 
 bool
 QTMMathCompletionPopup::eventFilter (QObject* obj, QEvent* event) {
-  if (event->type () == QEvent::MouseButtonPress) {
+  if (event->type () == QEvent::WindowStateChange) {
+    // 主窗口最小化时隐藏 popup
+    QWidget* tlw= qobject_cast<QWidget*> (obj);
+    if (tlw && tlw->windowState () & Qt::WindowMinimized) {
+      hide ();
+    }
+  }
+  else if (event->type () == QEvent::Hide) {
+    // 主窗口被隐藏时隐藏 popup
+    hide ();
+  }
+  else if (event->type () == QEvent::MouseButtonPress) {
     const char* className= obj->metaObject ()->className ();
     if (!strcmp (className, "QToolButton")) {
       // 如果点击的是

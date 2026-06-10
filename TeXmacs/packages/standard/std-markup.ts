@@ -480,7 +480,7 @@
 
   <assign|marked-padding|0.2fn>
 
-  <assign|marked|<macro|body|<quasi|<style-with|src-compact|none|<datoms|<macro|x|<style-with|src-compact|none|<tabular|<tformat|<cwith|1|1|1|1|cell-background|<unquote|<value|marked-color>>>|<cwith|1|1|1|1|cell-lsep|<unquote|<value|marked-padding>>>|<cwith|1|1|1|1|cell-rsep|<unquote|<value|marked-padding>>>|<cwith|1|1|1|1|cell-bsep|<unquote|<value|marked-padding>>>|<cwith|1|1|1|1|cell-tsep|<unquote|<value|marked-padding>>>|<cwith|1|-1|1|-1|cell-lborder|0ln>|<cwith|1|-1|1|-1|cell-rborder|0ln>|<cwith|1|-1|1|-1|cell-bborder|0ln>|<cwith|1|-1|1|-1|cell-tborder|0ln>|<twith|table-width|>|<twith|table-valign|B>|<twith|table-hmode|auto>|<twith|table-block|no>|<table|<row|<cell|<arg|x>>>>>>>>|<arg|body>>>>>>
+  <assign|marked|<macro|body|<with|text-bg-color|<value|marked-color>|<arg|body>>>>
 
   <drd-props|marked|with-like|yes|arity|1|accessible|all>
 
@@ -531,7 +531,7 @@
 
   <assign|marginal-note|<macro|hpos|vpos|body|<with|dummy1|<value|marginal-note-width>|dummy2|<value|marginal-note-sep>|<compound|<merge|marginal-|<arg|hpos>|-note>|<arg|vpos>|<arg|body>|<arg|hpos>>>>>
 
-  <drd-props|marginal-note|arity|3|accessible|none>
+  <drd-props|marginal-note|arity|3|accessible|2>
 
   <\active*>
     <\src-comment>

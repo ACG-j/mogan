@@ -118,7 +118,7 @@
   (with t (tree->stree (get-style-tree))
     (and (pair? t) (== (car t) 'tuple) (null? (cdr t)))))
 
-(define (sync-buffer-dark-style-with-gui-theme . opt-buf)
+(tm-define (sync-buffer-dark-style-with-gui-theme . opt-buf)
   (with buf (if (null? opt-buf) (current-buffer) (car opt-buf))
     (with-buffer buf
       (if (== (get-preference "gui theme") "liii-night")
@@ -293,8 +293,9 @@
 ;; ----
 ;; doc id 只在用户明确保存时随文档持久化；打开已有文件时不会静默
 ;; 写回源文件。
-(define (save-buffer-save name opts)
+(define (save-buffer-save name opts . kind*)
   ;;(display* "save-buffer-save " name "\n")
+  (let ((kind (if (null? kind*) "save" (car kind*))))
   (with vname `(verbatim ,(utf8->cork (url->system name)))
     (auto-backup-ensure-buffer-doc-id! name)
     (if (buffer-save name)
@@ -308,8 +309,8 @@
           ;; Remember directory for file dialog
           (remember-file-dialog-directory name)
           (set-message `(concat "Saved " ,vname) "Save file")
-          (auto-backup-buffer name "on-save")
-          (save-buffer-post name opts)))))
+          (auto-backup-buffer name kind)
+          (save-buffer-post name opts))))))
 
 (define (save-buffer-check-faithful name opts)
   ;;(display* "save-buffer-check-faithful " name "\n")
@@ -432,7 +433,7 @@
   (if (and (url-scratch? name) (url-exists? name)) (system-remove name))
   (buffer-rename name new-name)
   (buffer-pretend-modified new-name)
-  (save-buffer-save new-name opts))
+  (save-buffer-save new-name opts "save-as"))
 
 (define (save-buffer-as-check-faithful new-name name opts)
   ;;(display* "save-check-as-check-faithful " new-name ", " name "\n")
@@ -489,7 +490,10 @@
   (with vto `(verbatim ,(url->system to))
     (if (buffer-export name to fm)
         (set-message `(concat "Could not save " ,vto) "Export file")
-        (set-message `(concat "Exported to " ,vto) "Export file"))))
+        (begin
+          (set-message `(concat "Exported to " ,vto) "Export file")
+          (when (== fm "pdf")
+            (auto-backup-buffer name "export-pdf"))))))
 
 (define (export-buffer-check-permissions name to fm opts)
   ;;(display* "export-buffer-check-permissions " name ", " to ", " fm "\n")
@@ -1379,8 +1383,8 @@
                         'backup)))))))))
 
 (tm-define (auto-backup-buffer name . kind*)
-  (let ((kind (if (null? kind*) "periodic" (car kind*))))
-    (cond ((and (== kind "periodic") (not (buffer-modified? name)))
+  (let ((kind (if (null? kind*) "auto" (car kind*))))
+    (cond ((and (or (== kind "auto") (== kind "periodic")) (not (buffer-modified? name)))
            (auto-backup-log
             (string-append "skip-clean "
                            (auto-backup-buffer-path name)))
@@ -1424,9 +1428,9 @@
 (tm-define (auto-backup-all)
   (let ((buffers (buffer-list)))
     (auto-backup-log
-     (string-append "periodic-scan buffers="
+     (string-append "auto-scan buffers="
                     (number->string (length buffers))))
-    (for-each (lambda (name) (auto-backup-buffer name "periodic"))
+    (for-each (lambda (name) (auto-backup-buffer name "auto"))
               buffers)))
 
 (tm-define (auto-backup-now)
@@ -1452,7 +1456,7 @@
 
 (tm-define (auto-backup-official-url)
   (if (== (get-output-language) "chinese")
-      "https://liiistem.cn/?utm_source=auto_backup_button"
+      "https://liiistem.cn/personal-center/backup.html?utm_source=auto_backup_button"
       "https://liiistem.com/?utm_source=auto_backup_button"))
 
 (tm-define (auto-backup-upload-buffer name backup-result)
@@ -1567,7 +1571,6 @@
   (or (url-rooted-web? u)
       (not (in? (url-root u) (list "tmfs" "file" "default" "blank" "ramdisc")))
       (file-of-format? u "image")
-      (file-of-format? u "pdf")
       (file-of-format? u "postscript")
       (file-of-format? u "generic")))
 
@@ -1575,6 +1578,18 @@
   (when (not (url-rooted? u))
     (set! u (url-relative (current-buffer) u)))
   (open-url u))
+
+(tm-define (load-pdf-buffer u)
+  (when (not (url-rooted? u))
+    (set! u (url-relative (current-buffer) u)))
+  (if (buffer-exists? u)
+      (switch-to-buffer u)
+      (begin
+        (buffer-set u '(document))
+        (buffer-set-title u (url->system (url-tail u)))
+        (switch-to-buffer u)))
+  (buffer-notify-recent u)
+  (remember-file-dialog-directory u))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Loading buffers
@@ -1675,7 +1690,9 @@
       (if (current-buffer)
           (set! name (url-relative (current-buffer) name))
           (set! name (url-append (url-pwd) name))))
-  (load-buffer-check-autosave name opts))
+  (if (== (url-suffix name) "pdf")
+      (load-pdf-buffer name)
+      (load-buffer-check-autosave name opts)))
 
 ;; The load flowgraph:
 ;; load-buffer
@@ -1701,6 +1718,8 @@
 (tm-define (load-browse-buffer name)
   (:synopsis "Load a buffer or switch to it if already open")
   (cond ((buffer-exists? name) (switch-to-buffer name))
+        ((== (url-suffix name) "pdf")
+         (load-pdf-buffer name))
         ((and (buffer-external? name)
          (!= (url-suffix name) "tm")
          (!= (url-suffix name) "tmu"))
@@ -1796,13 +1815,21 @@
   (:argument u smart-file "File name")
   (:default  u (propose-name-buffer))
   (when (not (url-none? u))
-    (if (window-per-buffer?) (load-buffer-in-new-window u) (load-buffer u))))
+    (if (== (url-suffix u) "pdf")
+        (load-pdf-buffer u)
+        (if (window-per-buffer?)
+            (load-buffer-in-new-window u)
+            (load-buffer u)))))
 
 (tm-define (load-document* u)
   (:argument u smart-file "File name")
   (:default  u (propose-name-buffer))
   (when (not (url-none? u))
-    (if (window-per-buffer?) (load-buffer u) (load-buffer-in-new-window u))))
+    (if (== (url-suffix u) "pdf")
+        (load-pdf-buffer u)
+        (if (window-per-buffer?)
+            (load-buffer u)
+            (load-buffer-in-new-window u)))))
 
 (tm-define (switch-document u)
   (:argument u smart-file "File name")

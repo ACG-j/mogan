@@ -34,7 +34,7 @@ concater_rep::typeset_large (tree t, path ip, int tp, int otp, string prefix) {
       br= br (1, N (br) - 1);
     if (N (t) == 1) {
       string s= prefix * br * ">";
-      box    b= text_box (ip, 0, s, env->fn, env->pen);
+      box    b= build_text_box (ip, 0, s, env);
       print (tp, otp, b);
       // temporarary: use parameters from group-open class in std-math.syx
       // bug: allow hyphenation after ) and before *
@@ -42,7 +42,7 @@ concater_rep::typeset_large (tree t, path ip, int tp, int otp, string prefix) {
     else if (N (t) == 2 && is_int (t[1])) {
       int    nr = max (as_int (t[1]->label), 0);
       string s  = prefix * br * "-" * as_string (nr) * ">";
-      box    b  = text_box (ip, 0, s, env->fn, env->pen);
+      box    b  = build_text_box (ip, 0, s, env);
       SI     dy = env->fn->yfrac - ((b->y1 + b->y2) >> 1);
       box    mvb= move_box (ip, b, 0, dy, false, true);
       print (STD_ITEM, otp, macro_box (ip, mvb, env->fn));
@@ -59,7 +59,8 @@ concater_rep::typeset_large (tree t, path ip, int tp, int otp, string prefix) {
         y2= env->as_length (t[2]);
       }
       string s= prefix * br * ">";
-      box    b= delimiter_box (ip, s, env->fn, env->pen, y1, y2);
+      box    b= delimiter_box (ip, s, env->fn, env->pen, y1, y2,
+                               get_env_bg_color (env));
       print (STD_ITEM, otp, b);
     }
   }
@@ -476,7 +477,7 @@ concater_rep::typeset_sqrt (tree t, path ip) {
         (disp ? lfn->sqrt_ver_disp_gap : lfn->sqrt_ver_gap) + (lfn->wline >> 1);
   }
   box sqrtb= delimiter_box (decorate_left (ip), "<large-sqrt>", lfn, env->pen,
-                            b->y1, b->y2 + gap);
+                            b->y1, b->y2 + gap, get_env_bg_color (env));
   if (stix)
     sqrtb= shift_box (decorate_left (ip), sqrtb, -env->fn->wline / 2,
                       -env->fn->wline / 3, false, true);

@@ -1099,15 +1099,6 @@ function main()
                     "string"
                 }
             },
-            {
-                scm_name = "enter-secure-mode",
-                cpp_name = "enter_secure_mode",
-                ret_type = "void",
-                arg_list = {
-                    "int"
-                }
-            },
-            
               -- connections to extern systems
             {
                 scm_name = "connection-start",
@@ -1980,6 +1971,11 @@ function main()
             {
                 scm_name = "stem-device-id",
                 cpp_name = "stem_device_id",
+                ret_type = "string"
+            },
+            {
+                scm_name = "get-pretty-os-name",
+                cpp_name = "get_pretty_os_name",
                 ret_type = "string"
             },
         }

@@ -18,6 +18,7 @@
 #include "merge_sort.hpp"
 #include "moebius/tree_label.hpp"
 #include "new_buffer.hpp"
+#include "new_style.hpp"
 #include "new_window.hpp"
 #include "preferences.hpp"
 #include "server.hpp"
@@ -798,8 +799,7 @@ TeXmacs_main (int argc, char** argv) {
       else if ((s == "-S") || (s == "-setup") || (s == "-delete-cache") ||
                (s == "-delete-font-cache") || (s == "-delete-style-cache") ||
                (s == "-delete-file-cache") || (s == "-delete-doc-cache") ||
-               (s == "-delete-plugin-cache") || (s == "-delete-server-data") ||
-               (s == "-delete-databases") || (s == "-headless"))
+               (s == "-delete-plugin-cache") || (s == "-headless"))
         ;
       else if (s == "-build-manual") {
         if ((++i) < argc)
@@ -896,15 +896,18 @@ TeXmacs_main (int argc, char** argv) {
   if (DEBUG_STD) debug_boot << "Starting server...\n";
   { // opening scope for server sv
     server sv (app_type::RESEARCH);
-    string where           = "";
-    bool   has_initial_file= false;
-    bool   first_file      = true;
+    string where     = "";
+    bool   first_file= true;
+
+    if (install_status == 1) load_welcome_doc ();
+
+    ensure_window ();
+
     for (i= 1; i < argc; i++) {
       if (argv[i] == NULL) break;
       string s= argv[i];
       if ((N (s) >= 2) && (s (0, 2) == "--")) s= s (1, N (s));
       if ((s[0] != '-') && (s[0] != '+')) {
-        has_initial_file= true;
         if (DEBUG_STD) debug_boot << "Loading " << s << "...\n";
         url u= url_system (s);
         if (!is_rooted (u)) u= resolve (url_pwd (), "") * u;
@@ -913,7 +916,8 @@ TeXmacs_main (int argc, char** argv) {
         // only open window once
         if (first_file) {
           buffer_load (u);
-          new_buffer_in_new_window (u, tree (moebius::DOCUMENT));
+          new_buffer_in_this_window (u, tree (moebius::DOCUMENT));
+          eval_scheme ("(buffer-notify-recent " * b * ")");
           first_file= false;
         }
         else {
@@ -931,10 +935,6 @@ TeXmacs_main (int argc, char** argv) {
         i++;
       }
     }
-
-    if (install_status == 1) load_welcome_doc ();
-
-    if (!has_initial_file) ensure_window ();
 
     if (DEBUG_BENCH) lolly::system::bench_print (std_bench);
     bench_reset ("initialize texmacs");
@@ -969,6 +969,7 @@ TeXmacs_main (int argc, char** argv) {
 #endif
 
     if (N (extra_init_cmd) > 0) exec_delayed (scheme_cmd (extra_init_cmd));
+    ensure_hidden_package_set ();
     gui_start_loop ();
 
     if (DEBUG_STD) debug_boot << "Stopping server...\n";

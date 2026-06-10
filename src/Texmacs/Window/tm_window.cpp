@@ -311,6 +311,7 @@ enrich_embedded_document (tree body, tree style) {
   if (!is_func (body, DOCUMENT)) body= tree (DOCUMENT, body);
   hashmap<string, tree> initial (UNINIT);
   initial (PAGE_MEDIUM)      = "automatic";
+  initial (SCROLL_BARS)      = "false";
   initial (PAGE_SCREEN_LEFT) = "4px";
   initial (PAGE_SCREEN_RIGHT)= "4px";
   initial (PAGE_SCREEN_TOP)  = "2px";
@@ -322,11 +323,9 @@ enrich_embedded_document (tree body, tree style) {
         // cout << "Set " << orig[i] << " = " << orig[i+1] << LF;
         initial (orig[i]->label)= orig[i + 1];
       }
-  // initial (DPI)= "720";
-  // initial (ZOOM_FACTOR)= (retina_zoom==1? "1.2": "1.8");
-  initial (DPI)        = "600";
-  initial (ZOOM_FACTOR)= (retina_zoom == 2 ? "1.0" : "1.2");
-  // TODO: to be carefully checked for all operating systems
+  initial (DPI)= "600";
+  if (!initial->contains (ZOOM_FACTOR))
+    initial (ZOOM_FACTOR)= (retina_zoom == 2 ? "1.0" : "1.2");
   initial ("no-zoom")= "true";
   tree doc (DOCUMENT);
   doc << compound ("TeXmacs", TEXMACS_VERSION);
@@ -530,6 +529,11 @@ tm_window_rep::set_bottom_tools_flag (int which, bool flag) {
   else if (which == 1) set_extra_tools_visibility (wid, flag);
 }
 
+void
+tm_window_rep::set_chat_sidebar_flag (bool flag) {
+  set_chat_sidebar_visibility (wid, flag);
+}
+
 bool
 tm_window_rep::get_header_flag () {
   return get_header_visibility (wid);
@@ -562,6 +566,11 @@ tm_window_rep::get_bottom_tools_flag (int which) {
   if (which == 0) return get_bottom_tools_visibility (wid);
   else if (which == 1) return get_extra_tools_visibility (wid);
   else return false;
+}
+
+bool
+tm_window_rep::get_chat_sidebar_flag () {
+  return get_chat_sidebar_visibility (wid);
 }
 
 /******************************************************************************

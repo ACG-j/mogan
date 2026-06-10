@@ -49,17 +49,8 @@
       ("Pictures" (picture-gc))
       ("Plugins" (reinit-plugin-cache))
       ("Styles" (style-clear-cache)))
-  (if (url-exists-in-path? "pdflatex")
-      (-> "LaTeX"
-          (link tmtex-menu)))
   (-> "References"
       (link ref-menu))
-  (if supports-email?
-      (-> "Email"
-          ("Open mailbox" (email-open-mailbox))
-          ("Retrieve email" (begin (email-pop) (email-open-inbox)))
-          ---
-          ("Pop server settings" (interactive email-settings))))
   (-> "Project"
       (link project-manage-menu))
   ("Statistics" (show-counts))

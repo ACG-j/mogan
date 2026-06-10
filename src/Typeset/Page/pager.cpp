@@ -240,14 +240,16 @@ pager_rep::make_header (bool empty_flag) {
   int current_page= N (pages) + 1 + page_offset;
   if (current_page <= 0) env->write (PAGE_NR, "");
   else env->write (PAGE_NR, as_string (current_page));
-  tree   old  = env->local_begin (PAR_COLUMNS, "1");
-  string which= (N (pages) & 1) == 0 ? PAGE_ODD_HEADER : PAGE_EVEN_HEADER;
+  tree   old_col  = env->local_begin (PAR_COLUMNS, "1");
+  tree   old_first= env->local_begin (PAR_FIRST, "0cm");
+  string which    = (N (pages) & 1) == 0 ? PAGE_ODD_HEADER : PAGE_EVEN_HEADER;
   if (style[PAGE_THIS_HEADER] != "") which= PAGE_THIS_HEADER;
   tree header_tree= decode_images_in_tree (style[which]);
   box  b          = typeset_as_concat (
       env, attach_here (tree (PARA, header_tree), decorate ()));
   style (PAGE_THIS_HEADER)= "";
-  env->local_end (PAR_COLUMNS, old);
+  env->local_end (PAR_FIRST, old_first);
+  env->local_end (PAR_COLUMNS, old_col);
   return b;
 }
 
@@ -258,14 +260,16 @@ pager_rep::make_footer (bool empty_flag) {
   if (current_page <= 0) env->write (PAGE_NR, "");
   else env->write (PAGE_NR, as_string (current_page));
   env->write (PAGE_THE_PAGE, style[PAGE_THE_PAGE]);
-  tree   old  = env->local_begin (PAR_COLUMNS, "1");
-  string which= (N (pages) & 1) == 0 ? PAGE_ODD_FOOTER : PAGE_EVEN_FOOTER;
+  tree   old_col  = env->local_begin (PAR_COLUMNS, "1");
+  tree   old_first= env->local_begin (PAR_FIRST, "0cm");
+  string which    = (N (pages) & 1) == 0 ? PAGE_ODD_FOOTER : PAGE_EVEN_FOOTER;
   if (style[PAGE_THIS_FOOTER] != "") which= PAGE_THIS_FOOTER;
   tree footer_tree= decode_images_in_tree (style[which]);
   box  b          = typeset_as_concat (
       env, attach_here (tree (PARA, footer_tree), decorate ()));
   style (PAGE_THIS_FOOTER)= "";
-  env->local_end (PAR_COLUMNS, old);
+  env->local_end (PAR_FIRST, old_first);
+  env->local_end (PAR_COLUMNS, old_col);
   return b;
 }
 
@@ -301,26 +305,32 @@ pager_rep::make_pages () {
 
   int nr_pages= N (pages);
   int nx      = max (1, min (env->page_packet, nr_pages));
-  int d       = env->page_offset % nx;
-  int ny      = ((nr_pages + nx - 1 + d) / nx);
+  if (env->page_packet == 2) nx= max (1, env->page_packet);
+  int d = env->page_offset % nx;
+  int ny= ((nr_pages + nx - 1 + d) / nx);
 
-  SI         pixel= env->pixel;
-  array<box> pg   = pages;
-  if (env->get_string (PAGE_MEDIUM) == "paper" &&
-      env->get_string (PAGE_BORDER) != "none")
+  SI pixel= env->pixel;
+  SI vgap = 0;
+  if (env->get_string (PAGE_BORDER) == "none") {
+    vgap= 4 * pixel;
+  }
+  array<box> pg= pages;
+  if (env->get_string (PAGE_MEDIUM) == "paper")
     for (int i= 0; i < nx; i++)
       for (int j= 0; j < ny; j++) {
         int p= j * nx + i - d;
         if (p >= 0 && p < nr_pages) {
-          SI l= 10 * pixel, r= 10 * pixel;
-          SI b= 10 * pixel, t= 10 * pixel;
-          if (env->get_string (PAGE_BORDER) == "attached") {
-#ifdef QTTEXMACS
-            if (i > 0) l= pixel / 2;
-#else
+          SI l= 0, r= 0, b= 0, t= 0;
+          if (env->get_string (PAGE_BORDER) != "none") {
+            l= 10 * pixel, r= 10 * pixel;
+            b= 10 * pixel, t= 10 * pixel;
+            if (env->get_string (PAGE_BORDER) == "attached") {
+              if (i > 0) l= pixel / 2;
+              if (i < nx - 1) r= 0;
+            }
+          }
+          else {
             if (i > 0) l= pixel;
-#endif
-            if (i < nx - 1) r= 0;
           }
           color bg= tm_background;
           if (env->get_string ("full-screen-mode") == "true") bg= black;
@@ -351,7 +361,8 @@ pager_rep::make_pages () {
       yy[j]= yy[j - 1];
       for (int i= 0; i < nx; i++) {
         int p= j * nx + i - d;
-        if (p >= 0 && p < nr_pages) yy[j]= min (yy[j - 1] - pg[p]->h (), yy[j]);
+        if (p >= 0 && p < nr_pages)
+          yy[j]= min (yy[j - 1] - pg[p]->h () - vgap, yy[j]);
       }
     }
 

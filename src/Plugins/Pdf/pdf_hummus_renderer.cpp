@@ -255,7 +255,7 @@ public:
   void   set_brush (brush b2);
   void   set_background (brush b2);
 
-  void draw (int char_code, font_glyphs fn, SI x, SI y);
+  void draw (int glyph_index, font_glyphs fn, SI x, SI y, int codepoint= -1);
   void line (SI x1, SI y1, SI x2, SI y2);
   void lines (array<SI> x, array<SI> y);
   void clear (SI x1, SI y1, SI x2, SI y2);
@@ -1279,6 +1279,12 @@ match_font_base_name (string fontname, string basename) {
 }
 
 static bool
+is_noto_cjk_font (string fontname) {
+  return starts (fontname, "Noto CJK ") || starts (fontname, "NotoSansCJK") ||
+         starts (fontname, "NotoSerifCJK");
+}
+
+static bool
 requires_hack_notdef_for_tex_font (string fontname) {
   // This fix is necessary for avoiding bugs in certain Pdf viewers,
   // such as old versions of Preview under MacOS (<= 10.6.*).
@@ -1331,41 +1337,33 @@ requires_hack_notdef_for_tex_font (string fontname) {
   return r;
 }
 
-static bool
-pdf_is_invisible_format_codepoint (int ch) {
-  string internal;
-  if (ch < 256) internal << (char) ch;
-  else internal= "<#" * lolly::data::to_Hex (ch) * ">";
-  string_u8 utf8= herk_to_utf8 (internal);
-  if (N (utf8) == 0) return false;
-  int          pos = 0;
-  unsigned int code= lolly::data::decode_from_utf8 (utf8, pos);
-  return code == 0x200B;
-}
-
 void
-pdf_hummus_renderer_rep::draw (int ch, font_glyphs fn, SI x, SI y) {
-  // debug_convert << "draw \"" << (char)ch << "\" " << ch << " "
-  //		<< fn->res_name << "\n";
+pdf_hummus_renderer_rep::draw (int glyph_index, font_glyphs fn, SI x, SI y,
+                               int codepoint) {
+  // debug_convert << "draw \"" << (char)glyph_index << "\" " << glyph_index
+  //                << " " << fn->res_name << "\n";
+  if (glyph_index == 0x17 &&
+      (starts (fn->res_name, "ecss10") || starts (fn->res_name, "ecrm10")))
+    return;
+  if (codepoint == 0x200B && is_noto_cjk_font (fn->res_name)) return;
   // emoji cache for this renderer instance
-  if (pdf_is_invisible_format_codepoint (ch)) return;
   static hashmap<index_type, picture> emoji_cache;
-  if (is_emoji_character (ch)) {
-    if (draw_emoji (ch, fn, x, y)) {
+  if (is_emoji_character (glyph_index)) {
+    if (draw_emoji (glyph_index, fn, x, y)) {
       return;
     }
   }
-  glyph gl= fn->get (ch);
+  glyph gl= fn->get (glyph_index);
   if (is_nil (gl)) return;
   string fontname     = fn->res_name;
-  int    fontchunk    = t3font_font_chunk (ch);
+  int    fontchunk    = t3font_font_chunk (glyph_index);
   string fontchunkname= fontname * string ("-chunk") * as_string (fontchunk);
 
-  if (ch == 0 && requires_hack_notdef_for_tex_font (fontname)) {
-    draw (161, fn, x, y);
+  if (glyph_index == 0 && requires_hack_notdef_for_tex_font (fontname)) {
+    draw (161, fn, x, y, -1);
     return;
   }
-  string        char_name (fontname * "-" * as_string (ch));
+  string        char_name (fontname * "-" * as_string (glyph_index));
   pdf_raw_image glyph;
 
   if (cfn != fontname && cfn != fontchunkname) {
@@ -1406,32 +1404,34 @@ pdf_hummus_renderer_rep::draw (int ch, font_glyphs fn, SI x, SI y) {
   contentContext->Td (to_x (x) - prev_text_x, to_y (y) - prev_text_y);
   prev_text_x= to_x (x);
   prev_text_y= to_y (y);
-  // debug_convert << "char " << ch << "index " << gl->index
+  // debug_convert << "char " << glyph_index << "index " << gl->index
   //               << " " << x << " " << y << " font " << cfn  << LF;
-  if (cfid == NULL) t3font_list (cfn)->add_glyph (ch);
+  if (cfid == NULL) t3font_list (cfn)->add_glyph (glyph_index);
   GlyphUnicodeMappingList glyphs;
   if (cfid != NULL && EuropeanComputerModern_fonts->contains (cfn) &&
       gl->index >= 27 && gl->index <= 31) {
-    ch+= 0xfb00 - 27;
+    glyph_index+= 0xfb00 - 27;
   }
   int gl_index;
   if (cfid != NULL) gl_index= gl->index;
   else
-    gl_index= t3font_get_local_glyph (ch, t3font_list (cfn)->font_chunk,
-                                      t3font_list (cfn)->fn->res_name);
+    gl_index=
+        t3font_get_local_glyph (glyph_index, t3font_list (cfn)->font_chunk,
+                                t3font_list (cfn)->fn->res_name);
   static const std::string ligature_ff = "/Span << /ActualText (ff) >> BDC ";
   static const std::string ligature_fi = "/Span << /ActualText (fi) >> BDC ";
   static const std::string ligature_fl = "/Span << /ActualText (fl) >> BDC ";
   static const std::string ligature_ffi= "/Span << /ActualText (ffi) >> BDC ";
   static const std::string ligature_ffl= "/Span << /ActualText (ffl) >> BDC ";
-  if (ch >= 0xfb00 && ch <= 0xfb04 && ePDFVersion >= ePDFVersion15) {
-    if (ch == 0xfb00) contentContext->WriteFreeCode (ligature_ff);
-    if (ch == 0xfb01) contentContext->WriteFreeCode (ligature_fi);
-    if (ch == 0xfb02) contentContext->WriteFreeCode (ligature_fl);
-    if (ch == 0xfb03) contentContext->WriteFreeCode (ligature_ffi);
-    if (ch == 0xfb04) contentContext->WriteFreeCode (ligature_ffl);
+  if (glyph_index >= 0xfb00 && glyph_index <= 0xfb04 &&
+      ePDFVersion >= ePDFVersion15) {
+    if (glyph_index == 0xfb00) contentContext->WriteFreeCode (ligature_ff);
+    if (glyph_index == 0xfb01) contentContext->WriteFreeCode (ligature_fi);
+    if (glyph_index == 0xfb02) contentContext->WriteFreeCode (ligature_fl);
+    if (glyph_index == 0xfb03) contentContext->WriteFreeCode (ligature_ffi);
+    if (glyph_index == 0xfb04) contentContext->WriteFreeCode (ligature_ffl);
     if (cfid != NULL) {
-      glyphs.push_back (GlyphUnicodeMapping (gl_index, ch));
+      glyphs.push_back (GlyphUnicodeMapping (gl_index, glyph_index));
       contentContext->Tj (glyphs);
     }
     else {
@@ -1443,7 +1443,7 @@ pdf_hummus_renderer_rep::draw (int ch, font_glyphs fn, SI x, SI y) {
   }
   else {
     if (cfid != NULL) {
-      glyphs.push_back (GlyphUnicodeMapping (gl_index, ch));
+      glyphs.push_back (GlyphUnicodeMapping (gl_index, glyph_index));
       contentContext->Tj (glyphs);
     }
     else {
@@ -1655,6 +1655,17 @@ pdf_hummus_renderer_rep::image (url u, double w, double h, SI x, SI y,
   }
 
   if (is_nil (im)) return;
+
+  // For tiny PDFs where image_size returns unreliable dimensions (e.g. 1x1
+  // from Qt's QImage loader), fallback to rasterization to avoid extreme
+  // scaling that produces spurious lines.
+  string ext= suffix (u);
+  if ((ext == "pdf" || ext == "svg") && (im->w <= 1 || im->h <= 1)) {
+    scalable sim= load_scalable_image (u, (SI) (w * pixel), (SI) (h * pixel),
+                                       tree (), pixel);
+    renderer_rep::draw_scalable (sim, x, y, alpha);
+    return;
+  }
 
   end_text ();
 

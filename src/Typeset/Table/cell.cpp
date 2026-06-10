@@ -19,7 +19,8 @@ using namespace moebius;
  * Cells
  ******************************************************************************/
 
-cell_rep::cell_rep (edit_env env2) : var (""), env (env2), border_flags (0) {}
+cell_rep::cell_rep (edit_env env2)
+    : var (""), env (env2), border_flags (0), bcolor_precedence (-1) {}
 
 void
 cell_rep::typeset (tree fm, tree t, path iq) {
@@ -33,12 +34,20 @@ cell_rep::typeset (tree fm, tree t, path iq) {
   cell_local_begin (fm);
   if (is_func (t, SUBTABLE, 1)) {
     lsep= rsep= bsep= tsep= 0;
-    T                     = table (env, 2);
+    var->reset (CELL_LSEP);
+    var->reset (CELL_RSEP);
+    var->reset (CELL_BSEP);
+    var->reset (CELL_TSEP);
+    T= table (env, 2);
     T->typeset_subtable (t[0], descend (iq, 0), var);
   }
   else if (is_func (t, DOCUMENT, 1) && is_func (t[0], SUBTABLE, 1)) {
     lsep= rsep= bsep= tsep= 0;
-    T                     = table (env, 2);
+    var->reset (CELL_LSEP);
+    var->reset (CELL_RSEP);
+    var->reset (CELL_BSEP);
+    var->reset (CELL_TSEP);
+    T= table (env, 2);
     T->typeset_subtable (t[0][0], descend (descend (iq, 0), 0), var);
   }
   else {
@@ -178,6 +187,11 @@ cell_rep::format_cell (tree fm) {
     if (bg == "foreground") bg= env->get_string (COLOR);
   }
   else bg= "";
+  if (var->contains (CELL_BORDER_COLOR)) {
+    bcolor= env->exec (var[CELL_BORDER_COLOR]);
+    if (bcolor == "foreground") bcolor= env->get_string (COLOR);
+  }
+  else bcolor= "";
   if (var->contains (CELL_WIDTH)) {
     width= env->as_length (env->exec (var[CELL_WIDTH]));
     if (var->contains (CELL_HMODE))
@@ -228,6 +242,12 @@ cell_rep::format_cell (tree fm) {
   if (var->contains (CELL_TBORDER))
     tborder= env->as_length (env->exec (var[CELL_TBORDER])) >> 1;
   else tborder= 0;
+  if (var->contains (CELL_DBORDER))
+    dborder= env->as_length (env->exec (var[CELL_DBORDER])) >> 1;
+  else dborder= 0;
+  if (var->contains (CELL_ABORDER))
+    aborder= env->as_length (env->exec (var[CELL_ABORDER])) >> 1;
+  else aborder= 0;
   if (var->contains (CELL_HALIGN))
     halign= as_string (env->exec (var[CELL_HALIGN]));
   else halign= "l";
@@ -285,11 +305,18 @@ cell_rep::compute_width (SI& mw, SI& lw, SI& rw, bool large) {
     // cout << "Query" << LF << INDENT;
     format fm= lz->query (LAZY_BOX, make_query_vstream_width (0, 0));
     // cout << UNINDENT << "Queried" << LF;
-    format_width fw= (format_width) fm;
-    mw             = fw->width + lsep + rsep + lborder + rborder;
+    format_width fw    = (format_width) fm;
+    SI           cell_w= fw->width;
+    if (hyphen != "n") {
+      SI page_w, d1, d2, d3, d4, d5, d6, d7;
+      env->get_page_pars (page_w, d1, d2, d3, d4, d5, d6, d7);
+      SI max_w= page_w - lsep - rsep - lborder - rborder;
+      if (cell_w > max_w) cell_w= max_w;
+    }
+    mw= cell_w + lsep + rsep + lborder + rborder;
     if (lr_flag) {
       lw= lsep + lborder;
-      rw= fw->width + rsep + rborder;
+      rw= cell_w + rsep + rborder;
     }
   }
   else {
@@ -380,7 +407,7 @@ cell_rep::position_horizontally (SI offset, SI mw, SI lw, SI rw) {
     else xoff= lw;
     if (N (halign) > 1) xoff-= b->get_leaf_offset (halign (1, N (halign)));
   }
-  else xoff= -T->x1 + lborder;
+  else xoff= -T->x1;
 }
 
 void
@@ -398,7 +425,7 @@ cell_rep::position_vertically (SI offset, SI mh, SI bh, SI th) {
     else if (align_c == 'T') yoff= mh - th;
     else yoff= bh;
   }
-  else yoff= -T->y1 + bborder;
+  else yoff= -T->y1;
 }
 
 /******************************************************************************
@@ -446,7 +473,16 @@ cell_rep::finish () {
     b= T->b;
   }
 
-  b= cell_box (ip, b, xoff, yoff, 0, 0, x2 - x1, y2 - y1, lborder, rborder,
-               bborder, tborder, env->pen->get_brush (),
-               brush (bg, env->alpha));
+  brush fg= env->pen->get_brush ();
+  if (bcolor != "") fg= brush (bcolor, env->alpha);
+
+  if (!is_nil (T)) {
+    b= cell_box (ip, b, xoff, yoff, 0, 0, x2 - x1, y2 - y1, 0, 0, 0, 0, 0, 0,
+                 fg, brush (bg, env->alpha));
+  }
+  else {
+    b= cell_box (ip, b, xoff, yoff, 0, 0, x2 - x1, y2 - y1, lborder, rborder,
+                 bborder, tborder, dborder, aborder, fg,
+                 brush (bg, env->alpha));
+  }
 }

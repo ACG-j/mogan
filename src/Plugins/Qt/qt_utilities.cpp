@@ -313,7 +313,6 @@ conv_sub (const string& ks) {
   r= replace (r, "pagedown", "pgdown");
   r= replace (r, "S-", "Shift+");
   r= replace (r, "A-", "Alt+");
-  // r = replace (r, "K-", "");
 #ifdef Q_OS_MAC
   r= replace (r, "C-", "Meta+");
   r= replace (r, "M-", "Ctrl+");
@@ -1202,12 +1201,12 @@ from_modifiers (Qt::KeyboardModifiers mods) {
   if (mods & Qt::ShiftModifier) r= "S-" * r;
   if (mods & Qt::AltModifier) r= "A-" * r;
   if (os_macos ()) {
-    if (mods & Qt::MetaModifier) r= "C-" * r;    // The "Control" key
-    if (mods & Qt::ControlModifier) r= "M-" * r; // The "Command" key
+    if (mods & Qt::MetaModifier) r= "C-" * r;
+    if (mods & Qt::ControlModifier) r= "M-" * r;
   }
   else {
     if (mods & Qt::ControlModifier) r= "C-" * r;
-    if (mods & Qt::MetaModifier) r= "M-" * r; // The "Windows" key
+    if (mods & Qt::MetaModifier) r= "M-" * r;
   }
   return r;
 }
@@ -1545,4 +1544,13 @@ qt_clipboard_set_html (string html) {
   mimeData->setHtml (htmlText);
   mimeData->setText (htmlText);
   clipboard->setMimeData (mimeData, QClipboard::Clipboard);
+}
+
+/******************************************************************************
+ * PDF tab utilities
+ ******************************************************************************/
+
+bool
+is_pdf_tab_file (string file) {
+  return suffix (file) == "pdf";
 }

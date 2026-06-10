@@ -100,6 +100,23 @@
         (set-boolean-preference "status bar" val)
         (show-footer val))))
 
+(define (special-tab-buffer?)
+  ;; 启动页：始终屏蔽
+  ;; chat-tab 且 sidebar 不可见（全屏 chat tab）：屏蔽
+  ;; chat-tab 且 sidebar 可见（side dock）：放行，允许关闭
+  (let* ((url (url->system (current-buffer-url)))
+         (is-startup (string-starts? url "tmfs://startup-tab"))
+         (is-chat (string-starts? url "tmfs://chat-tab")))
+    (or is-startup
+        (and is-chat (not (visible-chat-sidebar?))))))
+
+(tm-define (toggle-chat-sidebar)
+  (:synopsis "Toggle the visibility of the AI chat sidebar")
+  (:check-mark "v" visible-chat-sidebar?)
+  (when (not (special-tab-buffer?))
+    (with val (not (visible-chat-sidebar?))
+      (show-chat-sidebar val))))
+
 (tm-define (toggle-visible-side-tools n)
   (:synopsis "Toggle the visibility of the @n-th side tools")
   (:check-mark "v" has-side-tools?)
@@ -143,7 +160,25 @@
 (tm-define (toggle-focus-mode)
   (:synopsis "Toggle focus mode.")
   (:check-mark "v" focus-mode?)
+  (if (and (not (focus-mode?)) (simplest-mode?))
+      (toggle-simplest-mode))
   (toggle-visible-header))
+
+(define saved-simplest-state '(#t #t))
+
+(tm-define (toggle-simplest-mode)
+  (:synopsis "Toggle simplest mode.")
+  (:check-mark "v" simplest-mode?)
+  (if (and (not (simplest-mode?)) (focus-mode?))
+      (toggle-focus-mode))
+  (if (simplest-mode?)
+      (begin
+        (show-icon-bar 1 (car saved-simplest-state))
+        (show-icon-bar 2 (cadr saved-simplest-state)))
+      (begin
+        (set! saved-simplest-state (list (visible-icon-bar? 1) (visible-icon-bar? 2)))
+        (show-icon-bar 1 #f)
+        (show-icon-bar 2 #f))))
 
 (define saved-informative-flags "default")
 

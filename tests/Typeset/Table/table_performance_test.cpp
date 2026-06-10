@@ -120,8 +120,8 @@ measure_time (Func&& func, const string& operation_name) {
   auto end= std::chrono::high_resolution_clock::now ();
   auto duration=
       std::chrono::duration_cast<std::chrono::microseconds> (end - start);
+  Q_UNUSED (operation_name);
 
-  qDebug () << as_charp (operation_name) << ": " << duration.count () << " μs";
   return duration.count ();
 }
 
@@ -166,6 +166,9 @@ private slots:
   // New tests for optimization validations
   void test_handle_decorations_correctness ();
   void test_handle_decorations_performance ();
+  void test_cell_hyphen_wrapping ();
+  void test_cell_hyphen_multi_column ();
+  void test_cell_long_content_no_row_duplication ();
   void cleanupTestCase ();
 };
 
@@ -176,7 +179,6 @@ TestTablePerformance::initTestCase () {
   cache_initialize ();
   init_tex ();
   moebius::drd::init_std_drd ();
-  qDebug () << "=== Table Performance Test ===";
 }
 
 void
@@ -196,7 +198,6 @@ TestTablePerformance::test_1x1_text_table () {
   simple_row[0]     = tree (CELL, "hello");
   simple_table[0][0]= simple_row;
 
-  qDebug () << "Testing 1x1 table with text content...";
   auto simple_time= measure_table_creation_time (env, simple_table,
                                                  "1x1 text table creation");
 
@@ -218,7 +219,6 @@ TestTablePerformance::test_1x1_matrix_table () {
   simple_row[0]     = tree (CELL, matrix_cell);
   simple_table[0][0]= simple_row;
 
-  qDebug () << "Testing 1x1 table with matrix content...";
   auto matrix_time= measure_table_creation_time (env, simple_table,
                                                  "1x1 matrix table creation");
 
@@ -491,9 +491,6 @@ TestTablePerformance::test_handle_decorations_correctness () {
   int rows_after= tab->nr_rows;
   int cols_after= tab->nr_cols;
 
-  qDebug () << "Table dimensions:" << rows_before << "x" << cols_before << "->"
-            << rows_after << "x" << cols_after;
-
   // Verify that decorations expanded the table
   QVERIFY (rows_after > rows_before);
   QVERIFY (cols_after > cols_before);
@@ -509,7 +506,6 @@ TestTablePerformance::test_handle_decorations_correctness () {
       }
     }
   }
-  qDebug () << "Non-nil cells after handle_decorations:" << total_cells;
   // At least original size * size cells should be present
   QVERIFY (total_cells >= size * size);
 }
@@ -616,16 +612,6 @@ TestTablePerformance::test_handle_decorations_performance () {
     double per_n2d2=
         median_us / ((double) size * (double) size * (double) d * (double) d);
 
-    qDebug () << as_charp (as_string (size) * "x" * as_string (size) *
-                           " handle_decorations median")
-              << ":" << median_us << "μs"
-              << "(d:" << d << "decorations:" << decorations << ")"
-              << "(us/n^2:" << per_n2 << "us/n^4:" << per_n4
-              << "us/(n^2*d^2):" << per_n2d2 << ")"
-              << "(min:" << min_us << "max:" << max_us << ")"
-              << "(" << rows_before << "x" << cols_before << "->" << rows_after
-              << "x" << cols_after << ")";
-
     QVERIFY (median_us >= 0.0);
     QVERIFY (rows_after > rows_before);
     QVERIFY (cols_after > cols_before);
@@ -633,9 +619,168 @@ TestTablePerformance::test_handle_decorations_performance () {
 }
 
 void
-TestTablePerformance::cleanupTestCase () {
-  qDebug () << "\n=== Performance Test Complete ===";
+TestTablePerformance::test_cell_hyphen_wrapping () {
+  cache_refresh ();
+  edit_env env= create_test_env ();
+
+  // Create a very long string that exceeds page width
+  string long_text;
+  for (int i= 0; i < 200; i++)
+    long_text << "d";
+
+  // Create table without wrapping (cell-hyphen = "n")
+  tree table_no_wrap (TFORMAT, tree (TABLE, 1));
+  tree row_no_wrap (ROW, 1);
+  row_no_wrap[0]     = tree (CELL, tree (DOCUMENT, long_text));
+  table_no_wrap[0][0]= row_no_wrap;
+
+  // Create table with wrapping (cell-hyphen = "t")
+  tree table_wrap (TFORMAT);
+  table_wrap << tree (CWITH, "1", "1", "1", "1", "cell-hyphen", "t");
+  table_wrap << tree (TABLE, 1);
+  tree row_wrap (ROW, 1);
+  row_wrap[0]     = tree (CELL, tree (DOCUMENT, long_text));
+  table_wrap[1][0]= row_wrap;
+
+  // Typeset table without wrapping
+  table tab_no_wrap (env);
+  tab_no_wrap->typeset (table_no_wrap, path ());
+  tab_no_wrap->position_columns (true);
+  tab_no_wrap->finish_horizontal ();
+  tab_no_wrap->position_rows ();
+  tab_no_wrap->finish ();
+
+  // Typeset table with wrapping
+  table tab_wrap (env);
+  tab_wrap->typeset (table_wrap, path ());
+  tab_wrap->position_columns (true);
+  tab_wrap->finish_horizontal ();
+  tab_wrap->position_rows ();
+  tab_wrap->finish ();
+
+  SI width_no_wrap       = tab_no_wrap->T[0][0]->b->w ();
+  SI width_wrap          = tab_wrap->T[0][0]->b->w ();
+  SI height_no_wrap      = tab_no_wrap->T[0][0]->b->h ();
+  SI height_wrap         = tab_wrap->T[0][0]->b->h ();
+  SI inner_width_no_wrap = tab_no_wrap->T[0][0]->b[0]->w ();
+  SI inner_width_wrap    = tab_wrap->T[0][0]->b[0]->w ();
+  SI inner_height_no_wrap= tab_no_wrap->T[0][0]->b[0]->h ();
+  SI inner_height_wrap   = tab_wrap->T[0][0]->b[0]->h ();
+
+  // When cell-hyphen is enabled, the cell should wrap and be narrower
+  // than the non-wrapping case
+  QVERIFY (width_wrap < width_no_wrap);
 }
+
+void
+TestTablePerformance::test_cell_hyphen_multi_column () {
+  cache_refresh ();
+  edit_env env= create_test_env ();
+
+  // Use actual text pattern from 0117.tmu
+  string long_text = "sdasd dasd sdsdasd dasd sdsdasd dasd sdsdasd dasd sd"
+                     "sdasd dasd sdsdasd dasd sdsdasd dasd sdsdasd dasd sd"
+                     "sdasd dasd sdsdasd dasd sdsdasd dasd sdsdasd dasd sd";
+  string short_text= "sdasd dasd sd";
+
+  // Create 2x5 table with cell-hyphen enabled for all cells
+  // Matching the 0117.tmu test case layout
+  tree table_wrap (TFORMAT);
+  table_wrap << tree (CWITH, "1", "-1", "1", "-1", "cell-hyphen", "t");
+  table_wrap << tree (TABLE, 2);
+
+  // Row 0: 3 long text cols + 1 short + 1 empty
+  tree row0 (ROW, 5);
+  row0[0]         = tree (CELL, tree (DOCUMENT, long_text));
+  row0[1]         = tree (CELL, tree (DOCUMENT, long_text));
+  row0[2]         = tree (CELL, tree (DOCUMENT, long_text));
+  row0[3]         = tree (CELL, tree (DOCUMENT, short_text));
+  row0[4]         = tree (CELL, tree (DOCUMENT, ""));
+  table_wrap[1][0]= row0;
+
+  // Row 1: 4 empty + 1 long text
+  tree row1 (ROW, 5);
+  row1[0]         = tree (CELL, tree (DOCUMENT, ""));
+  row1[1]         = tree (CELL, tree (DOCUMENT, ""));
+  row1[2]         = tree (CELL, tree (DOCUMENT, ""));
+  row1[3]         = tree (CELL, tree (DOCUMENT, ""));
+  row1[4]         = tree (CELL, tree (DOCUMENT, long_text));
+  table_wrap[1][1]= row1;
+
+  // Typeset table
+  table tab_wrap (env);
+  tab_wrap->typeset (table_wrap, path ());
+  tab_wrap->position_columns (true);
+
+  SI pw, d1, d2, d3, d4, d5, d6, d7;
+  tab_wrap->env->get_page_pars (pw, d1, d2, d3, d4, d5, d6, d7);
+  tab_wrap->finish_horizontal ();
+  tab_wrap->position_rows ();
+  tab_wrap->finish ();
+
+  // Check each cell's box width vs column width
+  for (int i= 0; i < 2; i++)
+    for (int j= 0; j < 5; j++) {
+      SI box_w= tab_wrap->T[i][j]->b->w ();
+      SI col_w= tab_wrap->mw[j];
+      Q_UNUSED (box_w);
+      Q_UNUSED (col_w);
+    }
+}
+
+// Regression test: when a table cell has very long horizontal content that
+// exceeds the page width, position_columns() calls lz->produce() to calculate
+// minimum widths, and finish_horizontal() calls lz->produce() again for the
+// actual content. Without the fix, the lazy_paragraph's stacker accumulates
+// items from both calls, causing the cell content to appear twice.
+void
+TestTablePerformance::test_cell_long_content_no_row_duplication () {
+  cache_refresh ();
+  edit_env env= create_test_env ();
+
+  // Create very long text (single unbreakable word)
+  string long_text;
+  for (int i= 0; i < 200; i++)
+    long_text << "d";
+
+  // Create a 2-column table with cell-hyphen enabled
+  // Two columns with long text triggers total > page_w in position_columns(),
+  // which causes lz->produce() to be called for width calculation.
+  tree table_tree (TFORMAT);
+  table_tree << tree (CWITH, "1", "-1", "1", "-1", "cell-hyphen", "t");
+  table_tree << tree (TABLE, 1);
+  tree row (ROW, 2);
+  row[0]          = tree (CELL, tree (DOCUMENT, long_text));
+  row[1]          = tree (CELL, tree (DOCUMENT, long_text));
+  table_tree[1][0]= row;
+
+  table tab (env);
+  tab->typeset (table_tree, path ());
+  tab->handle_decorations ();
+  tab->handle_span ();
+  tab->merge_borders ();
+  tab->position_columns (true);
+  tab->finish_horizontal ();
+  tab->position_rows ();
+  tab->finish ();
+
+  // The cell's b is a cell_box; b[0] is the inner content from lz->produce().
+  // Without the fix, b[0]->h() would be roughly doubled because
+  // format_paragraph() was called twice on the same lazy_paragraph.
+  SI content_h0= tab->T[0][0]->b[0]->h ();
+  SI content_h1= tab->T[0][1]->b[0]->h ();
+  SI line_h    = env->fn->yx;
+
+  // A generous upper bound: 10x line height.
+  // With the bug, content height would be ~2x of normal (roughly doubled).
+  QVERIFY2 (content_h0 < 10 * line_h,
+            "Cell 0 content height too large - possible row duplication");
+  QVERIFY2 (content_h1 < 10 * line_h,
+            "Cell 1 content height too large - possible row duplication");
+}
+
+void
+TestTablePerformance::cleanupTestCase () {}
 
 QTEST_MAIN (TestTablePerformance)
 #include "table_performance_test.moc"

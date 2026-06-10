@@ -44,7 +44,7 @@
 (define (auto-backup-test-version path created-at md5)
   `(("path" . ,path)
     ("created_at" . ,created-at)
-    ("kind" . "periodic")
+    ("kind" . "auto")
     ("md5" . ,md5)
     ("size" . 1)))
 
@@ -88,9 +88,9 @@
    "auto-backup" "official url"
    (lambda (case)
      (and (== case "utm")
-          (in? (auto-backup-official-url)
-               '("https://liiistem.cn/?utm_source=auto_backup_button"
-                 "https://liiistem.com/?utm_source=auto_backup_button"))))
+           (in? (auto-backup-official-url)
+                '("https://liiistem.cn/personal-center/backup.html?utm_source=auto_backup_button"
+                  "https://liiistem.com/?utm_source=auto_backup_button"))))
    :none
    (test "utm source" "utm" #t)))
 
@@ -117,7 +117,7 @@
        (auto-backup-test-info "doc-x" (string-append "md5-" (number->string i)))
        (string-append "/tmp/auto-backup-test-"
                       (number->string i) ".tmu")
-       "periodic"
+       "auto"
        i))
     (let-njson ((doc (njson-ref manifest "documents" "doc-x"))
                 (versions (njson-ref doc "versions")))

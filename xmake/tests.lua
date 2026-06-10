@@ -24,7 +24,7 @@ function add_target_cpp_test(filepath, dep1, dep2)
             add_syslinks("secur32")
         end
         add_rules("qt.console")
-        add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest")
+        add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest", "QtNetwork")
         if not is_plat("windows") then
             add_syslinks("pthread")
         end
@@ -40,8 +40,9 @@ function add_target_cpp_test(filepath, dep1, dep2)
         add_files("tests/Base/base.cpp")
         add_files(filepath)
         add_files(filepath, {rules = "qt.moc"})
-        before_build(function (target)
+        on_load(function (target)
             target:add("forceincludes", path.absolute("$(buildir)/config.h"))
+            target:add("forceincludes", path.absolute("$(buildir)/tm_configure.hpp"))
         end)
 
         if is_plat("wasm") then
@@ -73,7 +74,7 @@ function add_target_cpp_bench(filepath, dep)
             add_syslinks("secur32")
         end
         add_rules("qt.console")
-        add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest")
+        add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest", "QtNetwork")
         if not is_plat("windows") then
             add_syslinks("pthread")
         end
@@ -89,8 +90,9 @@ function add_target_cpp_bench(filepath, dep)
         add_files("tests/Base/base.cpp")
         add_files(filepath)
         add_files(filepath, {rules = "qt.moc"})
-        before_build(function (target)
+        on_load(function (target)
             target:add("forceincludes", path.absolute("$(buildir)/config.h"))
+            target:add("forceincludes", path.absolute("$(buildir)/tm_configure.hpp"))
         end)
     end
 end
@@ -111,9 +113,9 @@ function add_target_scheme_test(filepath, INSTALL_DIR, RUN_ENVS)
             print("Executing: " .. regtest_name)
             params = {
                 "-headless",
+                "-d",
                 "-b", filepath,
-                "-x", regtest_name,
-                "-q"
+                "-x", "(catch #t (lambda () " .. regtest_name .. " (quit-TeXmacs)) (lambda args (display \"Error: \") (display args) (newline) (exit 1)))"
             }
             if is_plat("macosx", "linux") then
                 binary = target:deps()["stem"]:targetfile()
@@ -148,9 +150,9 @@ function add_target_integration_test(filepath, INSTALL_DIR, RUN_ENVS)
             print("Executing: " .. test_name)
             params = {
                 "-headless",
+                "-d",
                 "-b", path.join("TeXmacs","tests",name..".scm"),
-                "-x", test_name,
-                "-q"
+                "-x", "(catch #t (lambda () " .. test_name .. " (quit-TeXmacs)) (lambda args (display \"Error: \") (display args) (newline) (exit 1)))"
             }
             if is_plat("macosx", "linux") then
                 binary = target:deps()["stem"]:targetfile()

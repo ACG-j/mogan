@@ -115,6 +115,7 @@
       ---)
   ("Full screen mode"  (toggle-full-screen-edit-mode))
   ("Focus mode" (toggle-focus-mode))
+  ("Simplest mode" (toggle-simplest-mode))
   ("Presentation mode" (toggle-full-screen-mode))
   ("Show panorama" (toggle-panorama-mode))
   ("Show all slides" (toggle-slideshow-mode))
@@ -145,11 +146,10 @@
         ("Mode dependent icons" (toggle-visible-icon-bar 1))
         ("Focus dependent icons" (toggle-visible-icon-bar 2))) 
         ;; ("User provided icons" (toggle-visible-icon-bar 3))
-  (if (not (window-per-buffer?)) ("Tab bar" (toggle-visible-icon-bar 4)))
   ("Status bar" (toggle-visible-footer))
   (if (with-developer-tool?)
       ("Left side tools" (toggle-visible-side-tools 1))
       ("Right side tools" (toggle-visible-side-tools 0))
-      ("GUI through markup" (toggle-markup-gui)))
-  ---
-  ("Animation toolbar" (toggle-bottom-bar "animate")))
+      ("GUI through markup" (toggle-markup-gui))
+      ---
+      ("Animation toolbar" (toggle-bottom-bar "animate"))))

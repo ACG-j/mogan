@@ -180,9 +180,8 @@
             (toggle ("Allow for macro definitions in preamble"
                      "texmacs->latex:use-macros"))
             (enum ("Encoding" "texmacs->latex:encoding")
-                  ("Strict Ascii" "ascii")
-                  ("Cork charset with TeX catcode definition in preamble" "cork")
-                  ("Utf-8 with inputenc LaTeX package" "utf-8"))
+                  ("Utf-8 with inputenc LaTeX package" "utf-8")
+                  ("Cork charset with TeX catcode definition in preamble" "cork"))
             ---
             (toggle ("Keep track of source code"
                      "texmacs->latex:source-tracking"))

@@ -99,6 +99,39 @@ table_rep::typeset_table (tree fm, tree t, path ip) {
     typeset_row (i, subformat[i], t[i], descend (ip, i));
     env->local_end (CELL_ROW_NR, old);
   }
+  if (is_func (fm, TFORMAT)) {
+    for (int i= 0; i < N (fm); i++) {
+      if (is_func (fm[i], CWITH) && N (fm[i]) >= 6 &&
+          fm[i][4] == "cell-border-color") {
+        if (is_int (fm[i][0]) && is_int (fm[i][1]) && is_int (fm[i][2]) &&
+            is_int (fm[i][3])) {
+          int r1= as_int (fm[i][0]);
+          int r2= as_int (fm[i][1]);
+          int c1= as_int (fm[i][2]);
+          int c2= as_int (fm[i][3]);
+
+          if (r1 >= 0) r1--;
+          else r1+= nr_rows;
+          if (r2 > 0) r2--;
+          else r2+= nr_rows;
+          r1= max (r1, 0);
+          r2= min (r2, nr_rows - 1);
+
+          if (c1 >= 0) c1--;
+          else c1+= nr_cols;
+          if (c2 > 0) c2--;
+          else c2+= nr_cols;
+          c1= max (c1, 0);
+          c2= min (c2, nr_cols - 1);
+
+          for (int r= r1; r <= r2; r++)
+            for (int c= c1; c <= c2; c++)
+              if (T[r] != NULL && !is_nil (T[r][c]))
+                T[r][c]->bcolor_precedence= i;
+        }
+      }
+    }
+  }
   STACK_DELETE_ARRAY (subformat);
   mw= tm_new_array<SI> (nr_cols);
   lw= tm_new_array<SI> (nr_cols);
@@ -309,6 +342,11 @@ table_rep::format_table (tree fm) {
   if (var->contains (TABLE_COL_ORIGIN))
     col_origin= as_int (env->exec (var[TABLE_COL_ORIGIN]));
   else col_origin= 1;
+  if (var->contains (TABLE_BORDER_COLOR)) {
+    bcolor= env->exec (var[TABLE_BORDER_COLOR]);
+    if (bcolor == "foreground") bcolor= env->get_string (COLOR);
+  }
+  else bcolor= "";
 }
 
 void
@@ -421,10 +459,13 @@ table_rep::handle_span () {
 
 void
 table_rep::merge_borders () {
-  int       hh= nr_cols + 1, vv= nr_rows + 1, nn= hh * vv;
-  array<SI> horb (nn), verb (nn);
-  for (int i= 0; i < nn; i++)
+  int        hh= nr_cols + 1, vv= nr_rows + 1, nn= hh * vv;
+  array<SI>  horb (nn), verb (nn);
+  array<int> hor_prec (nn), ver_prec (nn);
+  for (int i= 0; i < nn; i++) {
     horb[i]= verb[i]= 0;
+    hor_prec[i]= ver_prec[i]= -2;
+  }
 
   for (int i= 0; i < nr_rows; i++)
     for (int j= 0; j < nr_cols; j++) {
@@ -433,16 +474,28 @@ table_rep::merge_borders () {
         for (int di= 0; di < C->row_span; di++) {
           int ii= i + di, jj= j, kk= ii * hh + jj;
           horb[kk]= max (horb[kk], C->lborder);
+          if (C->lborder > 0 && C->bcolor_precedence > hor_prec[kk]) {
+            hor_prec[kk]= C->bcolor_precedence;
+          }
           jj      = j + C->col_span;
           kk      = ii * hh + jj;
           horb[kk]= max (horb[kk], C->rborder);
+          if (C->rborder > 0 && C->bcolor_precedence > hor_prec[kk]) {
+            hor_prec[kk]= C->bcolor_precedence;
+          }
         }
         for (int dj= 0; dj < C->col_span; dj++) {
           int ii= i, jj= j + dj, kk= ii * hh + jj;
           verb[kk]= max (verb[kk], C->tborder);
+          if (C->tborder > 0 && C->bcolor_precedence > ver_prec[kk]) {
+            ver_prec[kk]= C->bcolor_precedence;
+          }
           ii      = i + C->row_span;
           kk      = ii * hh + jj;
           verb[kk]= max (verb[kk], C->bborder);
+          if (C->bborder > 0 && C->bcolor_precedence > ver_prec[kk]) {
+            ver_prec[kk]= C->bcolor_precedence;
+          }
         }
       }
     }
@@ -454,22 +507,38 @@ table_rep::merge_borders () {
         SI lb= 0, rb= 0, bb= 0, tb= 0;
         for (int di= 0; di < C->row_span; di++) {
           int ii= i + di, jj= j, kk= ii * hh + jj;
-          lb= max (horb[kk], lb);
+          if (C->lborder == 0 || C->bcolor_precedence >= hor_prec[kk]) {
+            lb= max (horb[kk], lb);
+          }
           jj= j + C->col_span;
           kk= ii * hh + jj;
-          rb= max (horb[kk], rb);
+          if (C->rborder == 0 || C->bcolor_precedence >= hor_prec[kk]) {
+            rb= max (horb[kk], rb);
+          }
         }
         for (int dj= 0; dj < C->col_span; dj++) {
           int ii= i, jj= j + dj, kk= ii * hh + jj;
-          tb= max (verb[kk], tb);
+          if (C->tborder == 0 || C->bcolor_precedence >= ver_prec[kk]) {
+            tb= max (verb[kk], tb);
+          }
           ii= i + C->row_span;
           kk= ii * hh + jj;
-          bb= max (verb[kk], bb);
+          if (C->bborder == 0 || C->bcolor_precedence >= ver_prec[kk]) {
+            bb= max (verb[kk], bb);
+          }
         }
-        C->lborder= lb;
-        C->rborder= rb;
-        C->bborder= bb;
-        C->tborder= tb;
+        if (!is_nil (C->T)) {
+          C->lborder= 0;
+          C->rborder= 0;
+          C->bborder= 0;
+          C->tborder= 0;
+        }
+        else {
+          C->lborder= lb;
+          C->rborder= rb;
+          C->bborder= bb;
+          C->tborder= tb;
+        }
       }
     }
 }
@@ -618,6 +687,72 @@ table_rep::position_columns (bool large) {
   // for (int i=0; i<nr_cols; i++)
   //   cout << "Column " << i << ": " << (mw[i]>>8) << "; "
   //        << (lw[i]>>8) << ", " << (rw[i]>>8) << LF;
+
+  // Scale column widths if total exceeds page width
+  if (hmode == "auto" && large) {
+    SI total= sum (mw, nr_cols);
+    SI page_w, d1, d2, d3, d4, d5, d6, d7;
+    env->get_page_pars (page_w, d1, d2, d3, d4, d5, d6, d7);
+    if (total > page_w) {
+      bool has_hyphen= false;
+      for (int i= 0; i < nr_rows && !has_hyphen; i++)
+        for (int j= 0; j < nr_cols && !has_hyphen; j++)
+          if (!is_nil (T[i][j]) && !is_nil (T[i][j]->lz)) has_hyphen= true;
+      if (has_hyphen) {
+        // Proportional scaling
+        for (int j= 0; j < nr_cols; j++) {
+          mw[j]= (SI) ((((long long) mw[j]) * page_w) / total);
+          if (mw[j] < lw[j] + rw[j]) mw[j]= lw[j] + rw[j];
+        }
+        // Ensure no column is narrower than its content's minimum width
+        // by producing cells at the scaled width and checking for overflow
+        STACK_NEW_ARRAY (min_w, SI, nr_cols);
+        for (int j= 0; j < nr_cols; j++)
+          min_w[j]= lw[j] + rw[j];
+        for (int i= 0; i < nr_rows; i++)
+          for (int j= 0; j < nr_cols; j++) {
+            cell C= T[i][j];
+            if (!is_nil (C) && !is_nil (C->lz)) {
+              SI  w= mw[j] - C->lsep - C->lborder - C->rsep - C->rborder;
+              int v= C->hyphen == "t" ? 1 : (C->hyphen == "c" ? 0 : -1);
+              SI  d= ((C->vcorrect == "b") || (C->vcorrect == "a"))
+                         ? -env->fn->y1
+                         : 0;
+              SI h= ((C->vcorrect == "t") || (C->vcorrect == "a")) ? env->fn->y2
+                                                                   : 0;
+              box cb= (box) C->lz->produce (LAZY_BOX,
+                                            make_format_cell (w, v, d, h));
+              SI  cell_min=
+                  cb->w () + C->lsep + C->lborder + C->rsep + C->rborder;
+              min_w[j]= max (min_w[j], cell_min);
+            }
+          }
+        // Adjust columns that are below their minimum content width
+        for (int j= 0; j < nr_cols; j++)
+          if (mw[j] < min_w[j]) mw[j]= min_w[j];
+        // Redistribute: if total exceeds page_w, reduce columns above min_w
+        SI new_total= sum (mw, nr_cols);
+        if (new_total > page_w) {
+          SI excess  = new_total - page_w;
+          SI flexible= 0;
+          for (int j= 0; j < nr_cols; j++)
+            if (mw[j] > min_w[j]) flexible+= mw[j] - min_w[j];
+          if (flexible > 0) {
+            for (int j= 0; j < nr_cols; j++)
+              if (mw[j] > min_w[j]) {
+                SI reduction=
+                    (SI) ((((long long) excess) * (mw[j] - min_w[j])) /
+                          flexible);
+                mw[j]-= reduction;
+                if (mw[j] < min_w[j]) mw[j]= min_w[j];
+              }
+          }
+        }
+        STACK_DELETE_ARRAY (min_w);
+      }
+    }
+  }
+
   if (hmode != "auto" && large) {
     SI min_width= sum (mw, nr_cols);
     SI hextra   = width - min_width;
@@ -880,6 +1015,7 @@ table_rep::finish_horizontal () {
 
 void
 table_rep::finish () {
+  merge_borders ();
   int           i, j;
   array<box>    bs;
   array<SI>     x;
@@ -918,18 +1054,20 @@ table_rep::finish () {
   SI    x2= tb->x2;
   SI    y2= tb->y2;
   brush fg= env->pen->get_brush ();
+  if (bcolor != "") fg= brush (bcolor, env->alpha);
   brush bg= brush (false);
   b= cell_box (tb->ip, tb, 0, 0, x1, y1, x2, y2, lborder, rborder, bborder,
-               tborder, fg, bg);
+               tborder, 0, 0, fg, bg);
   SI Lsep= lsep + lborder, Rsep= rsep + rborder;
   SI Bsep= bsep + bborder, Tsep= tsep + tborder;
   if ((Lsep != 0) || (Rsep != 0) || (Bsep != 0) || (Tsep != 0))
     b= cell_box (b->ip, b, Lsep, 0, x1, y1 - Bsep, x2 + Lsep + Rsep, y2 + Tsep,
-                 0, 0, 0, 0, fg, bg);
+                 0, 0, 0, 0, 0, 0, fg, bg);
 }
 
 array<box>
 table_rep::var_finish () {
+  merge_borders ();
   if (hyphen == "n") {
     array<box> bs (1);
     finish ();
@@ -963,14 +1101,15 @@ table_rep::var_finish () {
     SI    y1= tb->y1 - BB;
     SI    y2= tb->y2 + TB;
     brush fg= env->pen->get_brush ();
+    if (bcolor != "") fg= brush (bcolor, env->alpha);
     brush bg= brush (false);
-    b= cell_box (tb->ip, tb, 0, 0, x1, y1, x2, y2, lborder, rborder, BB, TB, fg,
-                 bg);
+    b= cell_box (tb->ip, tb, 0, 0, x1, y1, x2, y2, lborder, rborder, BB, TB, 0,
+                 0, fg, bg);
     SI Lsep= lsep + lborder, Rsep= rsep + rborder;
     SI Bsep= BS + BB, Tsep= TS + TB;
     if ((Lsep != 0) || (Rsep != 0) || (Bsep != 0) || (Tsep != 0))
       b= cell_box (b->ip, b, Lsep, 0, x1, y1 - Bsep, x2 + Lsep + Rsep,
-                   y2 + Tsep, 0, 0, 0, 0, fg, bg);
+                   y2 + Tsep, 0, 0, 0, 0, 0, 0, fg, bg);
     stack << b;
   }
   return stack;

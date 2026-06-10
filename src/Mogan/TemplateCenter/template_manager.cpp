@@ -13,14 +13,17 @@
 #include "template_api.hpp"
 #include "template_cache.hpp"
 
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
 
 // Scheme integration for loading local config
 #include "s7_tm.hpp"
@@ -28,23 +31,33 @@
 #include "tm_file.hpp"
 
 #include "image_cache_base.hpp"
+#include "qt_utilities.hpp"
+
+#if !IS_COMMUNITY
+#include "telemetry.hpp"
+#endif
 
 // Singleton instance
 static TemplateManager* g_instance= nullptr;
 
 TemplateManager::TemplateManager (QObject* parent)
     : QObject (parent), initialized_ (false), cache_ (nullptr), api_ (nullptr),
-      isOnline_ (true), isRefreshing_ (false), isRetryingWithoutEtag_ (false) {
+      isOnline_ (true), isRefreshingCategories_ (false),
+      isRefreshingTemplates_ (false), categoriesFetched_ (false),
+      isRefreshingRecommendTemplates_ (false),
+      recommendTemplatesFetched_ (false) {
   cache_= new TemplateCache (this);
   api_  = new TemplateAPI (this);
 
   // Connect API signals (liiistem.cn API format)
-  connect (api_, &TemplateAPI::metadataLoaded, this,
-           &TemplateManager::onRemoteMetadataLoaded);
-  connect (api_, &TemplateAPI::metadataLoadFailed, this,
-           &TemplateManager::onRemoteMetadataFailed);
-  connect (api_, &TemplateAPI::metadataNotModified, this,
-           &TemplateManager::onMetadataNotModified);
+  connect (api_, &TemplateAPI::categoriesLoaded, this,
+           &TemplateManager::onRemoteCategoriesLoaded);
+  connect (api_, &TemplateAPI::categoriesLoadFailed, this,
+           &TemplateManager::onRemoteCategoriesFailed);
+  connect (api_, &TemplateAPI::templatesLoaded, this,
+           &TemplateManager::onRemoteTemplatesLoaded);
+  connect (api_, &TemplateAPI::templatesLoadFailed, this,
+           &TemplateManager::onRemoteTemplatesFailed);
   connect (api_, &TemplateAPI::downloadCompleted, this,
            &TemplateManager::onTemplateDownloaded);
   connect (api_, &TemplateAPI::downloadFailed, this,
@@ -53,6 +66,10 @@ TemplateManager::TemplateManager (QObject* parent)
            &TemplateManager::downloadProgress);
   connect (api_, &TemplateAPI::networkStateChanged, this,
            &TemplateManager::onNetworkStateChanged);
+  connect (api_, &TemplateAPI::recommendTemplatesLoaded, this,
+           &TemplateManager::onRemoteRecommendTemplatesLoaded);
+  connect (api_, &TemplateAPI::recommendTemplatesLoadFailed, this,
+           &TemplateManager::onRemoteRecommendTemplatesFailed);
 }
 
 TemplateManager::~TemplateManager () { g_instance= nullptr; }
@@ -74,14 +91,14 @@ TemplateManager::initialize () {
 
   // Initialize cache
   if (!cache_->initialize ()) {
-    qWarning () << "Failed to initialize template cache";
+    qWarning () << "[Template] Failed to initialize template cache";
     // Continue without cache - will work in degraded mode
   }
 
   // Load local templates first (offline fallback)
   loadLocalTemplates ();
 
-  // Try to load categories from cache first, fallback to Scheme file
+  // Load categories from cache or Scheme file for immediate UI display
   loadCachedCategories ();
 
   // Load cached metadata if available
@@ -89,24 +106,45 @@ TemplateManager::initialize () {
       cache_->loadMetadataCache ();
   if (!cachedMetadata.isEmpty ()) {
     mergeMetadata (cachedMetadata);
-    // Don't emit templatesLoaded here - wait for remote data or emit after
-    // checking
   }
 
-  // Always try to refresh remote metadata in the background.
-  // Cached data is already available for fast initial rendering and offline
-  // use.
-  refreshTemplates ();
+  // Always try to refresh categories in the background
+  refreshCategories ();
+
+  refreshRecommendTemplates ();
 
   initialized_= true;
   emit initialized (true);
+
+  // Load cached recommend template IDs AFTER initialized_= true so that
+  // UI callbacks like refreshTemplateCards() can safely query isInitialized().
+  recommendTemplateIds_= cache_->loadRecommendIdsCache ();
+  if (!recommendTemplateIds_.isEmpty ()) {
+    // Emit signal so UI can show cached recommendations immediately;
+    // do NOT set recommendTemplatesFetched_ here — we still want to
+    // refresh from network when online.
+    emit recommendTemplatesLoaded ();
+  }
 }
 
 void
 TemplateManager::loadLocalTemplates () {
   // Load templates from TeXmacs/templates/metadata.scm
   // TODO: Parse Scheme file and populate templates_
-  // For now, we'll rely on the cache and remote fetch
+}
+
+static QString
+computeFileMd5 (const QString& filePath) {
+  QFile file (filePath);
+  if (!file.open (QIODevice::ReadOnly)) {
+    return QString ();
+  }
+  QCryptographicHash hasher (QCryptographicHash::Md5);
+  while (!file.atEnd ()) {
+    hasher.addData (
+        file.read (64 * 1024)); // 64KB chunks, avoid OOM on large files
+  }
+  return hasher.result ().toHex ();
 }
 
 void
@@ -162,14 +200,14 @@ TemplateManager::loadCategoriesFromScheme (const string& filePath) {
 
   // Check if Scheme interpreter is available
   if (!tm_s7) {
-    qWarning () << "Scheme interpreter not available";
+    qWarning () << "[Template] Scheme interpreter not available";
     return categories;
   }
 
   // Load and evaluate the Scheme file
   tmscm result= eval_scheme_file (filePath);
   if (tmscm_is_null (result)) {
-    qWarning () << "Failed to load categories from Scheme file:"
+    qWarning () << "[Template] Failed to load categories from Scheme file:"
                 << QString::fromUtf8 (as_charp (filePath));
     return categories;
   }
@@ -177,14 +215,14 @@ TemplateManager::loadCategoriesFromScheme (const string& filePath) {
   // Call (template-get-categories) to get the category list
   tmscm categoriesFunc= s7_name_to_value (tm_s7, "template-get-categories");
   if (categoriesFunc == s7_undefined (tm_s7)) {
-    qWarning () << "template-get-categories function not found";
+    qWarning () << "[Template] template-get-categories function not found";
     return categories;
   }
 
   // Use eval_scheme with string expression to call the function
   tmscm categoriesList= eval_scheme ("(template-get-categories)");
   if (tmscm_is_null (categoriesList) || !tmscm_is_list (categoriesList)) {
-    qWarning () << "Invalid categories list from Scheme";
+    qWarning () << "[Template] Invalid categories list from Scheme";
     return categories;
   }
 
@@ -210,7 +248,7 @@ TemplateManager::loadCategoriesFromScheme (const string& filePath) {
 
           if (tmscm_is_symbol (key)) {
             string keyStr= tmscm_to_symbol (key);
-            if (keyStr == "id" && tmscm_is_string (value)) {
+            if (keyStr == "categoryKey" && tmscm_is_string (value)) {
               category.id=
                   QString::fromUtf8 (as_charp (tmscm_to_string (value)));
             }
@@ -218,16 +256,19 @@ TemplateManager::loadCategoriesFromScheme (const string& filePath) {
               category.name=
                   QString::fromUtf8 (as_charp (tmscm_to_string (value)));
             }
+            else if (keyStr == "nameEn" && tmscm_is_string (value)) {
+              category.nameEn=
+                  QString::fromUtf8 (as_charp (tmscm_to_string (value)));
+            }
             else if (keyStr == "description" && tmscm_is_string (value)) {
               category.description=
                   QString::fromUtf8 (as_charp (tmscm_to_string (value)));
             }
-            else if (keyStr == "icon" && tmscm_is_string (value)) {
-              category.icon=
-                  QString::fromUtf8 (as_charp (tmscm_to_string (value)));
-            }
             else if (keyStr == "order" && tmscm_is_int (value)) {
               category.order= tmscm_to_int (value);
+            }
+            else if (keyStr == "templateCount" && tmscm_is_int (value)) {
+              category.templateCount= tmscm_to_int (value);
             }
           }
         }
@@ -285,17 +326,56 @@ TemplateManager::templateById (const QString& templateId) const {
   return templates_.value (templateId);
 }
 
+QList<TemplateMetadataPtr>
+TemplateManager::recommendTemplates () const {
+  QList<TemplateMetadataPtr> result;
+  for (const QString& id : recommendTemplateIds_) {
+    auto tmpl= templates_.value (id);
+    if (tmpl) result.append (tmpl);
+  }
+  return result;
+}
+
 bool
 TemplateManager::isTemplateAvailableLocally (const QString& templateId) const {
   auto tmpl= templates_.value (templateId);
-  if (tmpl) {
-    // Always check actual file existence, not just cached flags
-    if (!tmpl->localPath.isEmpty () && QFile::exists (tmpl->localPath)) {
-      return true;
-    }
-    return cache_->isTemplateCached (templateId);
+  if (!tmpl) {
+    return false;
   }
-  return false;
+
+  if (!tmpl->localPath.isEmpty () && QFile::exists (tmpl->localPath)) {
+    return true;
+  }
+
+  return cache_->isTemplateCached (templateId);
+}
+
+bool
+TemplateManager::verifyLocalTemplate (const QString& templateId) {
+  auto tmpl= templates_.value (templateId);
+  if (!tmpl) {
+    return false;
+  }
+
+  if (!tmpl->localPath.isEmpty () && QFile::exists (tmpl->localPath)) {
+    if (!tmpl->fileMd5.isEmpty ()) {
+      QString actualMd5= computeFileMd5 (tmpl->localPath);
+      if (actualMd5 == tmpl->fileMd5) {
+        qDebug () << "[Template]" << templateId << "MD5 verified:" << actualMd5;
+        return true;
+      }
+      qWarning () << "[Template]" << templateId
+                  << "MD5 mismatch (expected:" << tmpl->fileMd5
+                  << "actual:" << actualMd5 << "), clearing cache";
+      cache_->removeCachedTemplate (templateId);
+      tmpl->localPath.clear ();
+      tmpl->isLocal= false;
+      return false;
+    }
+    return true;
+  }
+
+  return cache_->isTemplateCached (templateId);
 }
 
 QString
@@ -311,37 +391,59 @@ TemplateManager::localTemplatePath (const QString& templateId) const {
 }
 
 void
-TemplateManager::refreshTemplates () {
-  if (isRefreshing_) {
+TemplateManager::refreshCategories () {
+  if (isRefreshingCategories_ || categoriesFetched_) {
     return;
   }
+  isRefreshingCategories_= true;
+  api_->fetchCategories ();
+}
 
-  isRefreshing_= true;
-
-  // Set ETag for conditional request to avoid re-downloading unchanged metadata
-  if (cache_->isInitialized ()) {
-    api_->setMetadataEtag (cache_->metadataEtag ());
+void
+TemplateManager::refreshTemplates () {
+  if (isRefreshingTemplates_) {
+    return;
   }
+  isRefreshingTemplates_= true;
+  api_->fetchTemplates ();
+}
 
-  api_->fetchMetadata ();
+void
+TemplateManager::refreshTemplatesByCategory (const QString& categoryId) {
+  if (isRefreshingTemplates_ || fetchedCategories_.contains (categoryId)) {
+    return;
+  }
+  isRefreshingTemplates_       = true;
+  pendingIncrementalCategoryId_= categoryId;
+  api_->fetchTemplates (categoryId);
+}
+
+void
+TemplateManager::refreshRecommendTemplates () {
+  if (isRefreshingRecommendTemplates_ || recommendTemplatesFetched_) {
+    return;
+  }
+  isRefreshingRecommendTemplates_= true;
+  api_->fetchRecommendTemplates ();
 }
 
 void
 TemplateManager::downloadTemplate (const QString& templateId) {
   auto tmpl= templates_.value (templateId);
   if (!tmpl) {
-    emit downloadFailed (templateId, tr ("Template not found"));
+    emit downloadFailed (templateId, qt_translate ("Template not found"));
     return;
   }
 
   if (tmpl->fileUrl.isEmpty ()) {
-    emit downloadFailed (templateId, tr ("No download URL available"));
+    emit downloadFailed (templateId,
+                         qt_translate ("No download URL available"));
     return;
   }
 
   QString targetPath= templateFilePath (templateId);
   if (targetPath.isEmpty ()) {
-    emit downloadFailed (templateId, tr ("Invalid template ID"));
+    emit downloadFailed (templateId, qt_translate ("Invalid template ID"));
     return;
   }
 
@@ -353,39 +455,118 @@ TemplateManager::cancelDownload (const QString& templateId) {
   api_->cancelDownload (templateId);
 }
 
+QString
+TemplateManager::downloadTemplateSync (const QString& templateId, int timeoutMs,
+                                       QString* errorMessage) {
+  if (verifyLocalTemplate (templateId)) {
+    return localTemplatePath (templateId);
+  }
+
+  QEventLoop loop;
+  QString    resultPath;
+  QString    errorStr;
+  bool       finished= false;
+
+  QMetaObject::Connection completedConn=
+      connect (this, &TemplateManager::downloadCompleted,
+               [&] (const QString& id, const QString& localPath) {
+                 if (id != templateId || finished) return;
+                 resultPath= localPath;
+                 finished  = true;
+                 loop.quit ();
+               });
+
+  QMetaObject::Connection failedConn=
+      connect (this, &TemplateManager::downloadFailed,
+               [&] (const QString& id, const QString& error) {
+                 if (id != templateId || finished) return;
+                 errorStr= error;
+                 finished= true;
+                 loop.quit ();
+               });
+
+  QTimer timer;
+  timer.setSingleShot (true);
+  connect (&timer, &QTimer::timeout, [&] () {
+    if (finished) return;
+    errorStr= qt_translate ("Download timed out");
+    finished= true;
+    cancelDownload (templateId);
+    loop.quit ();
+  });
+  timer.start (timeoutMs);
+
+  downloadTemplate (templateId);
+
+  loop.exec ();
+
+  disconnect (completedConn);
+  disconnect (failedConn);
+
+  if (!finished || resultPath.isEmpty ()) {
+    if (errorMessage) {
+      *errorMessage=
+          errorStr.isEmpty () ? qt_translate ("Download failed") : errorStr;
+    }
+    return QString ();
+  }
+
+  return resultPath;
+}
+
 void
 TemplateManager::onNetworkStateChanged (bool isOnline) {
   isOnline_= isOnline;
   if (isOnline && initialized_) {
-    // Refresh immediately when connectivity is restored.
-    refreshTemplates ();
+    refreshCategories ();
+    refreshRecommendTemplates ();
   }
 }
 
 void
-TemplateManager::onRemoteMetadataLoaded (
-    const QHash<QString, TemplateMetadataPtr>& remoteMetadata,
-    const QList<TemplateCategory>&             remoteCategories) {
-  isRefreshing_         = false;
-  isRetryingWithoutEtag_= false;
+TemplateManager::onRemoteCategoriesLoaded (
+    const QList<TemplateCategory>& remoteCategories) {
+  isRefreshingCategories_= false;
+  categoriesFetched_     = true;
 
-  // Save ETag from successful response for future conditional requests
-  // Clear ETag if server no longer sends it (server may have disabled caching)
-  QString etag= api_->lastMetadataEtag ();
-  cache_->setMetadataEtag (etag);
+  if (!remoteCategories.isEmpty ()) {
+    categories_= remoteCategories;
+    categoryMap_.clear ();
+    for (const auto& cat : categories_) {
+      categoryMap_[cat.id]= cat;
+    }
+    cache_->saveCategoriesCache (categories_);
+    emit categoriesLoaded ();
+  }
+}
 
+void
+TemplateManager::onRemoteCategoriesFailed (const QString& error) {
+  isRefreshingCategories_= false;
+  qWarning () << "[Template] Failed to load remote categories:" << error;
+}
+
+void
+TemplateManager::onRemoteTemplatesLoaded (
+    const QHash<QString, TemplateMetadataPtr>& remoteMetadata) {
+  isRefreshingTemplates_= false;
+
+  // 空数据保护：本地已有数据时，空响应视为异常
   if (remoteMetadata.isEmpty () && !templates_.isEmpty ()) {
-    QString error= tr ("Remote metadata is empty");
-    qWarning () << "Skip metadata merge:" << error;
+    QString error= qt_translate ("Remote templates list is empty");
+    qWarning () << "[Template] Skip templates merge:" << error;
+    pendingIncrementalCategoryId_.clear ();
     emit templatesLoaded ();
     emit templatesLoadFailed (error);
     return;
   }
 
+  // 增量检测：通过显式标记判断，替代旧方案的数据推断
+  bool incremental= !pendingIncrementalCategoryId_.isEmpty ();
+
   int newCount    = 0;
   int updatedCount= 0;
 
-  // Count new and updated templates
   for (auto it= remoteMetadata.constBegin (); it != remoteMetadata.constEnd ();
        ++it) {
     const QString&            id          = it.key ();
@@ -400,63 +581,61 @@ TemplateManager::onRemoteMetadataLoaded (
     }
   }
 
-  // Update categories from remote (liiistem.cn API format)
-  if (!remoteCategories.isEmpty ()) {
-    categories_= remoteCategories;
-    categoryMap_.clear ();
-    for (const auto& cat : categories_) {
-      categoryMap_[cat.id]= cat;
-    }
-    // Save categories to cache for offline use
-    cache_->saveCategoriesCache (categories_);
-    emit categoriesLoaded ();
-  }
-
-  // Merge with existing data
-  mergeMetadata (remoteMetadata);
-
-  // Save to cache
+  mergeMetadata (remoteMetadata, incremental);
   cache_->saveMetadataCache (templates_);
-
-  // Notify UI
   emit templatesLoaded ();
 
   if (newCount > 0 || updatedCount > 0) {
     emit updateAvailable (newCount, updatedCount);
   }
+
+  // 记录该分类已获取，避免重复请求
+  if (incremental && !remoteMetadata.isEmpty ()) {
+    QString categoryId= remoteMetadata.constBegin ().value ()->category;
+    if (!categoryId.isEmpty ()) {
+      fetchedCategories_.insert (categoryId);
+    }
+  }
+  pendingIncrementalCategoryId_.clear ();
 }
 
 void
-TemplateManager::onRemoteMetadataFailed (const QString& error) {
-  isRefreshing_         = false;
-  isRetryingWithoutEtag_= false;
-  qWarning () << "Failed to load remote metadata:" << error;
-
-  // We still have local/cache data, so emit success for cached data
+TemplateManager::onRemoteTemplatesFailed (const QString& error) {
+  isRefreshingTemplates_= false;
+  pendingIncrementalCategoryId_.clear ();
+  qWarning () << "[Template] Failed to load remote templates:" << error;
   emit templatesLoaded ();
   emit templatesLoadFailed (error);
 }
 
 void
-TemplateManager::onMetadataNotModified () {
-  isRefreshing_= false;
-  if (templates_.isEmpty ()) {
-    if (isRetryingWithoutEtag_) {
-      qWarning () << "Server returned 304 even without If-None-Match, aborting";
-      isRetryingWithoutEtag_= false;
-      emit templatesLoadFailed (tr ("Server returned unexpected 304"));
-      return;
-    }
-    qWarning ()
-        << "304 received but no local cache available, retrying without ETag";
-    cache_->setMetadataEtag (QString ());
-    isRetryingWithoutEtag_= true;
-    refreshTemplates ();
+TemplateManager::onRemoteRecommendTemplatesLoaded (
+    const QHash<QString, TemplateMetadataPtr>& metadata) {
+  isRefreshingRecommendTemplates_= false;
+  recommendTemplatesFetched_     = true;
+
+  if (metadata.isEmpty () && !templates_.isEmpty ()) {
+    qWarning () << "[Template] Skip recommend templates merge: empty list";
+    emit recommendTemplatesLoaded ();
     return;
   }
-  isRetryingWithoutEtag_= false;
-  qDebug () << "Metadata not modified (304), using cached data";
-  emit templatesLoaded ();
+
+  recommendTemplateIds_.clear ();
+  for (auto it= metadata.constBegin (); it != metadata.constEnd (); ++it) {
+    recommendTemplateIds_.append (it.key ());
+  }
+
+  mergeMetadata (metadata, true);
+  cache_->saveMetadataCache (templates_);
+  cache_->saveRecommendIdsCache (recommendTemplateIds_);
+  emit recommendTemplatesLoaded ();
+}
+
+void
+TemplateManager::onRemoteRecommendTemplatesFailed (const QString& error) {
+  isRefreshingRecommendTemplates_= false;
+  qWarning () << "[Template] Failed to load recommend templates:" << error;
+  emit recommendTemplatesLoadFailed (error);
 }
 
 void
@@ -469,9 +648,19 @@ TemplateManager::onTemplateDownloaded (const QString& templateId,
     tmpl->isLocal  = true;
   }
 
-  // Register in cache
   QFileInfo fileInfo (localPath);
-  cache_->registerCachedTemplate (templateId, localPath, fileInfo.size ());
+  QString   fileMd5= computeFileMd5 (localPath);
+  cache_->registerCachedTemplate (templateId, localPath, fileInfo.size (),
+                                  fileMd5);
+
+  api_->incrementDownloadCount (templateId);
+
+#if !IS_COMMUNITY
+  telemetry_track (
+      "TEMPLATE_DOWNLOAD",
+      from_qstring (
+          QString ("'((\"template_id\" . \"%1\"))").arg (templateId)));
+#endif
 
   emit downloadCompleted (templateId, localPath);
 }
@@ -484,16 +673,20 @@ TemplateManager::onTemplateDownloadFailed (const QString& templateId,
 
 void
 TemplateManager::mergeMetadata (
-    const QHash<QString, TemplateMetadataPtr>& remoteMetadata) {
-  // Remove templates that are no longer in the remote list
-  QList<QString> toRemove;
-  for (auto it= templates_.constBegin (); it != templates_.constEnd (); ++it) {
-    if (!remoteMetadata.contains (it.key ())) {
-      toRemove.append (it.key ());
+    const QHash<QString, TemplateMetadataPtr>& remoteMetadata,
+    bool                                       incremental) {
+  if (!incremental) {
+    // Full refresh: remove templates that are no longer in the remote list
+    QList<QString> toRemove;
+    for (auto it= templates_.constBegin (); it != templates_.constEnd ();
+         ++it) {
+      if (!remoteMetadata.contains (it.key ())) {
+        toRemove.append (it.key ());
+      }
     }
-  }
-  for (const QString& id : toRemove) {
-    templates_.remove (id);
+    for (const QString& id : toRemove) {
+      templates_.remove (id);
+    }
   }
 
   for (auto it= remoteMetadata.constBegin (); it != remoteMetadata.constEnd ();
@@ -520,7 +713,7 @@ TemplateManager::mergeMetadata (
       if (isUpdated && existing->isLocal) {
         // Remote template has been updated, clear local cache to force
         // re-download
-        qDebug () << "Template" << id << "updated, clearing cache";
+        qDebug () << "[Template]" << id << "updated, clearing cache";
         cache_->removeCachedTemplate (id);
         existing->localPath.clear ();
         existing->isLocal= false;
@@ -561,7 +754,7 @@ TemplateManager::mergeMetadata (
     if (!tmpl->isLocal && cache_->isTemplateCached (tmpl->id)) {
       tmpl->isLocal  = true;
       tmpl->localPath= cache_->cachedTemplatePath (tmpl->id);
-      qDebug () << "Template" << tmpl->id << "found in cache";
+      qDebug () << "[Template]" << tmpl->id << "found in cache";
     }
   }
 }
@@ -583,8 +776,9 @@ TemplateManager::templateFilePath (const QString& templateId) const {
   // Only allow alphanumeric characters, hyphens, underscores, and dots
   static const QRegularExpression validIdRegex ("^[a-zA-Z0-9._-]+$");
   if (!validIdRegex.match (templateId).hasMatch ()) {
-    qWarning () << "Invalid templateId (potential path traversal attempt):"
-                << templateId;
+    qWarning ()
+        << "[Template] Invalid templateId (potential path traversal attempt):"
+        << templateId;
     return QString ();
   }
 
