@@ -227,7 +227,8 @@ add_requireconfs("liii-pdfhummus.freetype", {version = FREETYPE_VERSION, system 
 add_requires("argh v1.3.2")
 
 --- package: qt6widgets
-QT6_VERSION="6.8.3"
+local qt_sdkver = get_config("qt_sdkver")
+QT6_VERSION = qt_sdkver or QT6_VERSION
 add_requires("qt6widgets "..QT6_VERSION)
 
 if has_config("mupdf") then
