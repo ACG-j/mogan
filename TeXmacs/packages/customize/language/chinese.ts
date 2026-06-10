@@ -36,7 +36,7 @@
 
   <assign|language|chinese>
 
-  <assign|font|sys-chinese>
+  <assign|font|ENR>
 
   <use-module|(lang chinese-kbd)>
 

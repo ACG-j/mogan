@@ -435,7 +435,7 @@
   (cond ((and (supports-chinese?)
            (or (== (get-init "language") "chinese") (== (get-init "language") "taiwanese"))
          ) ;and
-         ((eval (string-append "Default: " (font-family->master (default-chinese-font))))
+         ((eval (string-append "Default: " (font-family->master "ENR")))
           (init-default-font)
          ) ;
          ---

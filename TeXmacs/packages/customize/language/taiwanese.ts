@@ -22,7 +22,7 @@
 
   <assign|language|taiwanese>
 
-  <assign|font|sys-chinese>
+  <assign|font|ENR>
 
   <if|<greater|<value|par-first>|0fn>|<assign|par-first|2fn>>
 
