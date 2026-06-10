@@ -423,12 +423,12 @@ qt_floating_search_bar_init (QWidget* parent, const string& aux_url_str,
   qreal searchZoom= DpiUtils::scaled (100) / 100.0;
   tree  doc;
   if (mode == "math") {
-    doc= tree (WITH, "font", "ENR", "zoom-factor", as_string (searchZoom),
-               "mode", "math", tree (DOCUMENT, ""));
+    doc= tree (WITH, "font", "sys-chinese", "zoom-factor",
+               as_string (searchZoom), "mode", "math", tree (DOCUMENT, ""));
   }
   else {
-    doc= tree (WITH, "font", "ENR", "zoom-factor", as_string (searchZoom),
-               tree (DOCUMENT, ""));
+    doc= tree (WITH, "font", "sys-chinese", "zoom-factor",
+               as_string (searchZoom), tree (DOCUMENT, ""));
   }
   tree   sty= compound ("style", tree (TUPLE, "generic"));
   widget tw = texmacs_input_widget (doc, sty, aux_url);
