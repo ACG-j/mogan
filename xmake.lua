@@ -228,8 +228,17 @@ add_requires("argh v1.3.2")
 
 --- package: qt6widgets
 local qt_sdkver = get_config("qt_sdkver")
+if is_plat("linux") and linuxos.name() == "archlinux" and not qt_sdkver then
+    qt_sdkver = try { function () return os.iorunv("qmake6", {"-query", "QT_VERSION"}):trim() end }
+end
 QT6_VERSION = qt_sdkver or QT6_VERSION
-add_requires("qt6widgets "..QT6_VERSION)
+if qt_sdkver then
+    add_requires("qt6base "..QT6_VERSION, {system = true})
+    add_requires("qt6widgets "..QT6_VERSION)
+    add_requireconfs("qt6widgets.qt6base", {system = true, override = true})
+else
+    add_requires("qt6widgets "..QT6_VERSION)
+end
 
 if has_config("mupdf") then
     if (linuxos.name() == "debian" and linuxos.version():major() >= CURRENT_DEBIAN_VERSION) or
@@ -333,6 +342,9 @@ target("QWKCore")
                 table.insert(private_paths, path.join(headers_path, qt_version))
             else
                 headers_path= path.join(qt_package, "include")
+                if not os.isdir(path.join(headers_path, module)) and os.isdir(path.join(headers_path, "qt6", module)) then
+                    headers_path = path.join(headers_path, "qt6")
+                end
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module, "private"))
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module))
                 table.insert(private_paths, path.join(headers_path, module, qt_version))
@@ -524,6 +536,9 @@ target("QWKWidgets")
                 table.insert(private_paths, path.join(headers_path, qt_version))
             else
                 headers_path= path.join(qt_package, "include")
+                if not os.isdir(path.join(headers_path, module)) and os.isdir(path.join(headers_path, "qt6", module)) then
+                    headers_path = path.join(headers_path, "qt6")
+                end
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module, "private"))
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module))
                 table.insert(private_paths, path.join(headers_path, module, qt_version))
