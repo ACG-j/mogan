@@ -170,7 +170,7 @@ ChatConversationPanel::setup_ui () {
   // Message area
   qreal chatZoom= DpiUtils::scaled (100) / 100.0;
   messageWidget_= texmacs_input_widget (
-      tree (WITH, "font", "sys-chinese", "zoom-factor", as_string (chatZoom),
+      tree (WITH, "font", "ENR", "zoom-factor", as_string (chatZoom),
             tree (DOCUMENT, "")),
       compound (kChatEmbeddedStyle, tuple ("generic")), msgBufferUrl_);
   set_zoom_factor (messageWidget_, chatZoom);
@@ -216,7 +216,7 @@ ChatConversationPanel::setup_ui () {
   inputAreaLayout->setSpacing (DpiUtils::scaled (kContentSpacing));
 
   inputWidget= texmacs_input_widget (
-      tree (WITH, "par-par-sep", "0.05fn", "font", "sys-chinese", "zoom-factor",
+      tree (WITH, "par-par-sep", "0.05fn", "font", "ENR", "zoom-factor",
             as_string (chatZoom), tree (DOCUMENT, "")),
       compound (kChatEmbeddedStyle, tuple ("generic")), inputBufferUrl_);
   set_zoom_factor (inputWidget, chatZoom);
