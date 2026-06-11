@@ -106,6 +106,14 @@
                        " -c "
                        (ocr-sh-quote script)))))
 
+(define (ocr-tool-python-command-with-args tool script args)
+  (let ((command (ocr-tool-python-command tool script)))
+    (if (== command "")
+        ""
+        (string-append command
+                       " "
+                       (string-recompose (map ocr-sh-quote args) " ")))))
+
 (define-public (ocr-tool-python-site-library tool)
   (let* ((tool-python (ocr-tool-python-path tool))
          (venv-root (if (== tool-python "")
@@ -195,11 +203,34 @@
           "p2t"
           (ocr-tool-python-command "p2t" script))))))
 
+(define-public (ocr-easyocr-available?)
+  (and (ocr-command-available? "p2t")
+       (== (ocr-command-output
+             (ocr-shell-command
+               (ocr-tool-python-command
+                 "p2t"
+                 (string-append "import importlib.util; "
+                                "print('yes' if importlib.util.find_spec("
+                                (ocr-python-string "easyocr")
+                                ") else 'no')"))))
+           "yes")))
+
+(define (ocr-easyocr-gpu-available?)
+  (and (ocr-easyocr-available?)
+       (ocr-python-cuda-available-with
+         (lambda (script)
+           (ocr-shell-command
+             (ocr-command-with-tool-libraries
+               "p2t"
+               (ocr-tool-python-command "p2t" script)))))))
+
 (define (ocr-pix2text-device)
   (if (ocr-pix2text-gpu-available?) "gpu" "cpu"))
 
 (define-public (ocr-available-providers)
   (let ((providers '()))
+    (when (ocr-easyocr-available?)
+      (set! providers (cons "easyocr" providers)))
     (when (ocr-command-available? "p2t")
       (set! providers (cons "pix2text" providers)))
     (when (ocr-command-available? "rapid_latex_ocr")
@@ -211,11 +242,15 @@
         (available (ocr-available-providers)))
     (cond ((and (== preferred "pix2text") (in? "pix2text" available))
            "pix2text")
+          ((and (== preferred "easyocr") (in? "easyocr" available))
+           "easyocr")
           ((and (== preferred "rapid-latex-ocr")
                 (in? "rapid-latex-ocr" available))
            "rapid-latex-ocr")
           ((and formula? (in? "rapid-latex-ocr" available))
            "rapid-latex-ocr")
+          ((and (not formula?) (in? "easyocr" available))
+           "easyocr")
           ((in? "pix2text" available)
            "pix2text")
           ((in? "rapid-latex-ocr" available)
@@ -225,6 +260,7 @@
 (define-public (ocr-provider-format provider formula?)
   (cond ((== provider "pix2text")
          (if formula? "latex" "markdown"))
+        ((== provider "easyocr") "markdown")
         ((== provider "rapid-latex-ocr") "latex")
         (else "verbatim")))
 
@@ -274,6 +310,22 @@
 (define (ocr-run-rapidlatex image-path)
   (ocr-run-command-to-file (ocr-rapidlatex-command image-path)))
 
+(define (ocr-easyocr-command image-path)
+  (let ((script
+          (string-append
+            "import easyocr, sys\n"
+            "reader = easyocr.Reader(['en'], gpu="
+            (if (ocr-easyocr-gpu-available?) "True" "False")
+            ", verbose=False)\n"
+            "result = reader.readtext(sys.argv[1], detail=0, paragraph=True)\n"
+            "print('\\n\\n'.join(result))")))
+    (ocr-command-with-tool-libraries
+      "p2t"
+      (ocr-tool-python-command-with-args "p2t" script (list image-path)))))
+
+(define (ocr-run-easyocr image-path)
+  (ocr-run-command-to-file (ocr-easyocr-command image-path)))
+
 (define (ocr-output-body output)
   (let* ((text (force-string output))
          (parts (string-decompose text "Outs:")))
@@ -304,6 +356,11 @@
   (ocr-clean-output
     (cond ((== provider "pix2text")
            (ocr-run-pix2text image-path formula?))
+          ((== provider "easyocr")
+           (let ((output (ocr-run-easyocr image-path)))
+             (if (== (tm-string-trim-both output) "")
+                 (ocr-run-pix2text image-path formula?)
+                 output)))
           ((== provider "rapid-latex-ocr")
            (ocr-run-rapidlatex image-path))
           (else ""))))
@@ -313,8 +370,9 @@
     "OCR backend not found.\n\n"
     "Install one local backend and try smart paste again:\n\n"
     "- Pix2Text: pip install pix2text\n"
+    "- EasyOCR: pip install easyocr\n"
     "- RapidLaTeXOCR: pip install rapid_latex_ocr\n\n"
-    "Pix2Text is preferred for mixed text and formulas; RapidLaTeXOCR is a "
+    "EasyOCR is preferred for text screenshots, Pix2Text for mixed text and formulas; RapidLaTeXOCR is a "
     "lightweight formula-only fallback. If GPU runtime packages are installed, "
     "the Python backend can use them outside the application process."))
 

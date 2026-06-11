@@ -23,8 +23,17 @@
          => "markdown")
   (check (ocr-provider-format "pix2text" #t)
          => "latex")
+  (check (ocr-provider-format "easyocr" #f)
+         => "markdown")
   (check (ocr-provider-format "rapid-latex-ocr" #f)
          => "latex"))
+
+(define (test-ocr-provider-selection)
+  (when (ocr-easyocr-available?)
+    (check (ocr-select-provider #f) => "easyocr"))
+  (when (and (ocr-command-available? "rapid_latex_ocr")
+             (!= (get-preference "ocr.provider") "pix2text"))
+    (check (ocr-select-provider #t) => "rapid-latex-ocr")))
 
 (define (test-ocr-pix2text-gpu-probe)
   (when (ocr-command-available? "p2t")
@@ -66,6 +75,7 @@
 
 (tm-define (test_222_57)
   (test-ocr-provider-format)
+  (test-ocr-provider-selection)
   (test-ocr-pix2text-gpu-probe)
   (test-ocr-pix2text-tool-paths)
   (test-ocr-clean-output)
