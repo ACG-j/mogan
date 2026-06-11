@@ -217,6 +217,10 @@
  ("search find" (search-next-match #t))
  ("search again" (search-next-match #t))
 
+ ;; Qt encodes Ctrl+Shift+V as C-V. Bind it outside profile-specific maps so
+ ;; magic paste also works when Linux falls back to the Emacs look-and-feel.
+ ("C-V" (kbd-magic-paste))
+
  ("cmd t" (make 'tabular))
  ("cmd t var" (make 'tabular*))
  ("cmd t var var" (make 'wide-tabular))
