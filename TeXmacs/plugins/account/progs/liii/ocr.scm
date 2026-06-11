@@ -574,6 +574,8 @@
             "    content = str(content or '').strip()\n"
             "    if not content:\n"
             "        return ''\n"
+            "    if label in ('chart', 'figure', 'image', 'table', 'seal', 'stamp'):\n"
+            "        return ''\n"
             "    bbox = bbox_of(block)\n"
             "    if label == 'formula':\n"
             "        formula = strip_formula_delimiters(content)\n"
@@ -690,12 +692,22 @@
     (cond ((== provider "pix2text")
            (ocr-run-pix2text image-path formula?))
           ((== provider "paddleocr")
+           ;; PPStructureV3 is tuned for multi-block pages. A single CJK line
+           ;; with inline math is often misclassified (e.g. as a "chart") and
+           ;; yields no usable blocks; fall back to pix2text, which detects
+           ;; inline formulas and handles Chinese text. EasyOCR is English and
+           ;; text-only, so it is only a last resort.
            (let ((output (ocr-run-paddleocr image-path)))
-             (if (== (tm-string-trim-both output) "")
-                 (if (ocr-easyocr-available?)
-                     (ocr-run-easyocr image-path)
-                     (ocr-run-pix2text image-path formula?))
-                 output)))
+             ;; Decide on the cleaned text: a degenerate result still carries
+             ;; the MOGAN_OCR_MARKDOWN_BEGIN marker and log lines, so the raw
+             ;; output is never literally empty.
+             (if (!= (tm-string-trim-both (ocr-clean-output output)) "")
+                 output
+                 (cond ((ocr-command-available? "p2t")
+                        (ocr-run-pix2text image-path formula?))
+                       ((ocr-easyocr-available?)
+                        (ocr-run-easyocr image-path))
+                       (else "")))))
           ((== provider "easyocr")
            (let ((output (ocr-run-easyocr image-path)))
              (if (== (tm-string-trim-both output) "")
