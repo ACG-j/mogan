@@ -17,6 +17,151 @@
 (import (liii time))
 
 (define temp-dir (os-temp-dir))
+(define ocr-default-languages "en,ch_sim")
+
+(define-preferences
+  ("ocr.provider" "auto" noop)
+  ("ocr.languages" ocr-default-languages noop))
+
+(define-public (ocr-command-available? cmd)
+  (and (string? cmd) (url-exists-in-path? cmd)))
+
+(define (ocr-command-output cmd)
+  (tm-string-trim-both (eval-system (string-append cmd " 2>&1"))))
+
+(define-public (ocr-shell-quote s)
+  (string-quote s))
+
+(define (ocr-python-command script)
+  (string-append "python -c " (ocr-shell-quote script)))
+
+(define (ocr-python-string s)
+  (string-append "'" s "'"))
+
+(define (ocr-python-module-available? module-name)
+  (and (ocr-command-available? "python")
+       (== (ocr-command-output
+             (ocr-python-command
+               (string-append "import importlib.util; "
+                              "print('yes' if importlib.util.find_spec("
+                              (ocr-python-string module-name)
+                              ") else 'no')")))
+           "yes")))
+
+(define-public (ocr-gpu-available?)
+  (or (ocr-python-module-available? "onnxruntime_gpu")
+      (and (ocr-python-module-available? "torch")
+           (== (ocr-command-output
+                 (ocr-python-command
+                   "import torch; print('yes' if torch.cuda.is_available() else 'no')"))
+               "yes"))))
+
+(define (ocr-pix2text-device)
+  (if (ocr-gpu-available?) "gpu" "cpu"))
+
+(define-public (ocr-available-providers)
+  (let ((providers '()))
+    (when (ocr-command-available? "p2t")
+      (set! providers (cons "pix2text" providers)))
+    (when (ocr-command-available? "rapid_latex_ocr")
+      (set! providers (cons "rapid-latex-ocr" providers)))
+    (reverse providers)))
+
+(define-public (ocr-select-provider formula?)
+  (let ((preferred (get-preference "ocr.provider"))
+        (available (ocr-available-providers)))
+    (cond ((and (== preferred "pix2text") (in? "pix2text" available))
+           "pix2text")
+          ((and (== preferred "rapid-latex-ocr")
+                (in? "rapid-latex-ocr" available))
+           "rapid-latex-ocr")
+          ((and formula? (in? "rapid-latex-ocr" available))
+           "rapid-latex-ocr")
+          ((in? "pix2text" available)
+           "pix2text")
+          ((in? "rapid-latex-ocr" available)
+           "rapid-latex-ocr")
+          (else #f))))
+
+(define-public (ocr-provider-format provider formula?)
+  (cond ((== provider "pix2text")
+         (if formula? "latex" "markdown"))
+        ((== provider "rapid-latex-ocr") "latex")
+        (else "verbatim")))
+
+(define (ocr-pix2text-command image-path formula?)
+  (string-append "p2t predict -l "
+                 (ocr-shell-quote (get-preference "ocr.languages"))
+                 " --device "
+                 (ocr-pix2text-device)
+                 " --file-type "
+                 (if formula? "formula" "text_formula")
+                 " -i "
+                 (ocr-shell-quote image-path)))
+
+(define (ocr-rapidlatex-command image-path)
+  (string-append "rapid_latex_ocr " (ocr-shell-quote image-path)))
+
+(define (ocr-output-body output)
+  (let* ((text (force-string output))
+         (parts (string-decompose text "Outs:")))
+    (if (> (length parts) 1)
+        (string-recompose (cdr parts) "Outs:")
+        text)))
+
+(define-public (ocr-clean-output output)
+  (let* ((trimmed (tm-string-trim-both (ocr-output-body output)))
+         (lines (string-split trimmed #\newline))
+         (useful (list-filter lines
+                   (lambda (line)
+                     (let ((line* (tm-string-trim-both line)))
+                       (and (!= line* "")
+                            (not (string-starts? line* "Running"))
+                            (not (string-starts? line* "Loading"))
+                            (not (string-starts? line* "Using"))
+                            (not (string-starts? line* "INFO:"))
+                            (not (string-starts? line* "WARNING:"))
+                            (not (string-contains? line* " In image:"))
+                            (not (string-starts? line* "In image:"))
+                            (not (string-contains? line* " Outs:"))
+                            (not (string-starts? line* "Outs:"))
+                            (not (string-starts? line* "cost:"))))))))
+    (tm-string-trim-both (string-recompose useful "\n"))))
+
+(define (ocr-run-provider provider image-path formula?)
+  (let* ((cmd (cond ((== provider "pix2text")
+                     (ocr-pix2text-command image-path formula?))
+                    ((== provider "rapid-latex-ocr")
+                     (ocr-rapidlatex-command image-path))
+                    (else "")))
+         (output (if (== cmd "") "" (ocr-command-output cmd))))
+    (ocr-clean-output output)))
+
+(define (ocr-missing-provider-message)
+  (string-append
+    "OCR backend not found.\n\n"
+    "Install one local backend and try smart paste again:\n\n"
+    "- Pix2Text: pip install pix2text\n"
+    "- RapidLaTeXOCR: pip install rapid_latex_ocr\n\n"
+    "Pix2Text is preferred for mixed text and formulas; RapidLaTeXOCR is a "
+    "lightweight formula-only fallback. If GPU runtime packages are installed, "
+    "the Python backend can use them outside the application process."))
+
+(define (ocr-insert-message message)
+  (insert (generic->texmacs message "markdown-snippet")))
+
+(define-public (ocr-result->texmacs result format)
+  (cond ((== format "latex")
+         (latex->texmacs (parse-latex result)))
+        ((== format "markdown")
+         (generic->texmacs result "markdown-snippet"))
+        (else
+         (generic->texmacs result "verbatim"))))
+
+(define (ocr-insert-result result format)
+  (if (== (tm-string-trim-both (force-string result)) "")
+      (ocr-insert-message "OCR produced no text.")
+      (insert (ocr-result->texmacs result format))))
 
 (define (get-image t i bool)
   (let* ((cur-t (tree-ref t i)))
@@ -62,17 +207,31 @@
   (go-to (cursor-path))
   (go-to-next-node)
   (kbd-return)
-  (let* ((content (string-load (unix->url "$TEXMACS_PATH/plugins/account/data/ocr.md"))))
-    (insert `(with "par-mode" "center" (document ,(utf8->cork content))))))
+  (ocr-insert-message (ocr-missing-provider-message)))
 
 (define (insert-latex-by-cursor)
-  (let* ((mode (get-env "mode"))
-         (latex-code (if (== mode "math")
-                         "E=m*c^2"  ;; 数学模式下返回 E=m*c^2 的 LaTeX
-                         (string-load (unix->url "$TEXMACS_PATH/plugins/account/data/ocr.tex"))))
-         (parsed-latex (parse-latex latex-code))
-         (texmacs-latex (latex->texmacs parsed-latex)))
-    (insert texmacs-latex)))
+  (insert-tips))
+
+(define (ocr-save-image-to-temp t)
+  (let* ((image-name (get-image t 0 #t))
+         (extension (if image-name (get-image-extension image-name) "png"))
+         (temp-name (string-append temp-dir "/temp-" (number->string (current-time)) "." extension))
+         (data-list (get-image t 0 #f)))
+    (if (and (list? data-list) (not (null? data-list)))
+        (let* ((base64-str (car data-list))
+               (binary-data (decode-base64 base64-str)))
+          (string-save binary-data temp-name)
+          (display* "Image has saved to " temp-name "\n")
+          temp-name)
+        #f)))
+
+(define-public (ocr-image->result image-path formula?)
+  (let* ((provider (ocr-select-provider formula?)))
+    (if provider
+        (list provider
+              (ocr-provider-format provider formula?)
+              (ocr-run-provider provider image-path formula?))
+        (list #f "markdown" (ocr-missing-provider-message)))))
 
 #|
 ocr-to-latex-by-cursor
@@ -97,24 +256,17 @@ t: tree
 2. 光标在文本模式中，插入图片对应的LaTeX代码片段
 |#
 (tm-define (ocr-to-latex-by-cursor t)
-  (let* ((extension (get-image-extension (get-image t 0 #t)))
-         (temp-name (string-append temp-dir "/temp-" (number->string (current-time)) "." extension))
-         (data-list 
-           (get-image t 0 #f)))
-    (when (and (list? data-list) (not (null? data-list)))
-          (let* ((base64-str (car data-list))
-                (binary-data (decode-base64 base64-str)))
-            (string-save binary-data temp-name)
-            (display* "Image has saved to " temp-name "\n"))))
-  (insert-latex-by-cursor))
+  (let* ((image-path (ocr-save-image-to-temp t))
+         (formula? (== (get-env "mode") "math")))
+    (if image-path
+        (let* ((ocr-result (ocr-image->result image-path formula?))
+               (format (cadr ocr-result))
+               (result (caddr ocr-result)))
+          (ocr-insert-result result format))
+        (ocr-insert-message "No image data found in clipboard."))))
 
 ; (get-image-extension (get-image t 0 #t)) 获取文件后缀，创建对应临时文件
 ; (get-image t 0 #f) 获取 raw-data
-
-(define (insert-latex-by-image t)
-  (tree-go-to t :end)
-  (kbd-return)
-  (insert-latex-by-cursor))
 
 #|
 ocr-to-latex-by-image
@@ -139,12 +291,13 @@ t: tree
 2. 光标在文本模式中，插入图片对应的LaTeX代码片段
 |#
 (tm-define (ocr-to-latex-by-image t)
-  (let* ((extention (get-image-extension (get-image t 0 #t)))
-         (temp-name (string-append temp-dir "/temp-" (number->string (current-time)) "." extention))
-         (data-list (get-image t 0 #f)))
-    (when (and (list? data-list) (not (null? data-list)))
-          (let* ((base64-str (car data-list))
-                (binary-data (decode-base64 base64-str)))
-            (string-save binary-data temp-name)
-            (display* "Image has saved to " temp-name "\n"))))
-  (insert-latex-by-image t))
+  (let* ((image-path (ocr-save-image-to-temp t))
+         (formula? (== (get-env "mode") "math")))
+    (tree-go-to t :end)
+    (kbd-return)
+    (if image-path
+        (let* ((ocr-result (ocr-image->result image-path formula?))
+               (format (cadr ocr-result))
+               (result (caddr ocr-result)))
+          (ocr-insert-result result format))
+        (ocr-insert-message "No image data found in clipboard."))))
