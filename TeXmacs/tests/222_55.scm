@@ -14,6 +14,7 @@
 
 (use-modules (generic generic-edit)
              (kernel texmacs tm-convert)
+             (convert rewrite init-rewrite)
              (data html)
              (data latex))
 
@@ -66,9 +67,44 @@
     (check (string-starts? serialized "(document")
            => #t)))
 
+(define (test-markdown-escape-latex-line-preserves-math)
+  ;; Text-mode specials (#, %, &) are escaped, but math spans are verbatim.
+  (check (markdown-escape-latex-line "a & b # c")
+         => "a \\& b \\# c")
+  (check (markdown-escape-latex-line "x $a & b$ y")
+         => "x $a & b$ y")
+  (check (markdown-escape-latex-line "$$\\begin{aligned}a&=b\\\\&=c\\end{aligned}$$")
+         => "$$\\begin{aligned}a&=b\\\\&=c\\end{aligned}$$")
+  (check (markdown-escape-latex-line "see $\\mathcal{H}^{*}$ & more")
+         => "see $\\mathcal{H}^{*}$ \\& more"))
+
+(define (test-markdown-snippet-converter-with-ocr-output)
+  ;; Mirrors PaddleOCR PPStructureV3 structured output for a mixed
+  ;; text + formula screenshot: aligned display math, inline math in
+  ;; the body, and a second display formula must all convert cleanly.
+  (let* ((input (string-append
+                  "$$\\begin{aligned}V(\\mu,\\pi)=&\\mathbb{E}"
+                  "_{a_h\\sim\\mu(s_h,h)}\\\\&\\left[\\sum_{h=0}^{H-1}"
+                  "\\gamma^h\\mathbb{E}(r(s_h,a_h,b_h))\\right]"
+                  "\\end{aligned}$$\n\n"
+                  "We denote the set of potential partner policies as "
+                  "$\\mathcal{H}^{*}$, which is a subset of $\\Pi$.\n\n"
+                  "$$\\mathrm{Reg}_{\\mathbf{Alg}}(K,\\mathcal{H},\\pi^{*})"
+                  "=\\sum_{k\\in[K]}[V^{*}(\\pi^{*})-V(\\mu^{k},\\pi^{*})].$$"))
+         (tree (generic->texmacs input "markdown-snippet"))
+         (serialized (object->string (tree->stree tree))))
+    (check (string-contains? serialized "bad format or data")
+           => #f)
+    (check (string-starts? serialized "(document")
+           => #t)
+    (check (string-contains? serialized "potential partner policies")
+           => #t)))
+
 (tm-define (test_222_55)
   (test-smart-paste-detect-text-format)
   (test-paste-as-markdown-does-not-insert-upsell)
   (test-markdown-snippet-converter)
   (test-markdown-snippet-converter-with-llm-output)
+  (test-markdown-escape-latex-line-preserves-math)
+  (test-markdown-snippet-converter-with-ocr-output)
   (check-report))

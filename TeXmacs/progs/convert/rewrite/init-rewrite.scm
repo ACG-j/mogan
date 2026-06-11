@@ -100,6 +100,59 @@
           (loop (cdr chars) (cons c (cons #\\ r)))
           (loop (cdr chars) (cons c r)))))))
 
+;; Index of the next inline-math delimiter ($) at or after start, or #f.
+(define (markdown-next-dollar s start)
+  (let ((n (string-length s)))
+    (let loop ((i start))
+      (cond ((>= i n) #f)
+            ((char=? (string-ref s i) #\$) i)
+            (else (loop (+ i 1)))))))
+
+;; Index of the next display-math delimiter ($$) at or after start, or #f.
+(define (markdown-next-double-dollar s start)
+  (let ((n (string-length s)))
+    (let loop ((i start))
+      (cond ((>= (+ i 1) n) #f)
+            ((and (char=? (string-ref s i) #\$)
+                  (char=? (string-ref s (+ i 1)) #\$))
+             i)
+            (else (loop (+ i 1)))))))
+
+;; Escape text-mode specials in a line, but copy $...$ and $$...$$ math
+;; spans verbatim so that LaTeX math (e.g. \begin{aligned}...&...\end{aligned}
+;; or inline $\mathcal{H}^{*}$) is preserved instead of having its #, % and &
+;; escaped away.
+(tm-define (markdown-escape-latex-line line)
+  (let ((n (string-length line)))
+    (let loop ((i 0) (text '()) (out '()))
+      (define (flush-text acc)
+        (if (null? text)
+            acc
+            (cons (markdown-escape-latex-text
+                    (list->string (reverse text)))
+                  acc)))
+      (cond
+        ((>= i n)
+         (apply string-append (reverse (flush-text out))))
+        ((and (< (+ i 1) n)
+              (char=? (string-ref line i) #\$)
+              (char=? (string-ref line (+ i 1)) #\$))
+         (let ((close (markdown-next-double-dollar line (+ i 2))))
+           (if close
+               (loop (+ close 2) '()
+                     (cons (substring line i (+ close 2)) (flush-text out)))
+               (loop n '()
+                     (cons (substring line i n) (flush-text out))))))
+        ((char=? (string-ref line i) #\$)
+         (let ((close (markdown-next-dollar line (+ i 1))))
+           (if close
+               (loop (+ close 1) '()
+                     (cons (substring line i (+ close 1)) (flush-text out)))
+               (loop n '()
+                     (cons (substring line i n) (flush-text out))))))
+        (else
+         (loop (+ i 1) (cons (string-ref line i) text) out))))))
+
 (define (markdown-leading-heading-level s)
   (let loop ((i 0))
     (if (and (< i (string-length s)) (char=? (string-ref s i) #\#))
@@ -175,23 +228,23 @@
                     (cmd (markdown-heading-command level)))
                (close-list)
                (emit (string-append "\\" cmd "{"
-                                    (markdown-escape-latex-text body)
+                                    (markdown-escape-latex-line body)
                                     "}\n\n"))))
             ((markdown-unordered-item-text s)
              (open-list "itemize")
              (emit (string-append "\\item "
-                                  (markdown-escape-latex-text
+                                  (markdown-escape-latex-line
                                     (markdown-unordered-item-text s))
                                   "\n")))
             ((markdown-ordered-item-text s)
              (open-list "enumerate")
              (emit (string-append "\\item "
-                                  (markdown-escape-latex-text
+                                  (markdown-escape-latex-line
                                     (markdown-ordered-item-text s))
                                   "\n")))
             (else
              (close-list)
-             (emit (string-append (markdown-escape-latex-text line) "\n\n"))))))
+             (emit (string-append (markdown-escape-latex-line line) "\n\n"))))))
       lines)
     (when code-mode? (emit "\\end{verbatim}\n\n"))
     (close-list)
