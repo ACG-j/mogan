@@ -55,6 +55,17 @@
            "INFO: loading\nIn image: /tmp/a.png\nOuts: \n\\frac{a}{b}\ncost: 0.1\n")
          => "\\frac{a}{b}"))
 
+(define (test-ocr-easyocr-line-filter)
+  (check (ocr-keep-easyocr-text-line?
+           "V(p,t) = Eah~H(shh)bh~T(shh) H-1 YhE(r (Sh; ahs bh))")
+         => #f)
+  (check (ocr-keep-easyocr-text-line?
+           "We denote the set of potential partner policies as H* which is")
+         => #t)
+  (check (ocr-keep-easyocr-text-line?
+           "RegAlg ' (K,H,t\") = [V* (j*) - V(pk,n*)].")
+         => #f))
+
 (define (test-ocr-result-conversion)
   (let* ((tree (ocr-result->texmacs "\\frac{a}{b}" "latex"))
          (serialized (object->string (tree->stree tree))))
@@ -79,6 +90,7 @@
   (test-ocr-pix2text-gpu-probe)
   (test-ocr-pix2text-tool-paths)
   (test-ocr-clean-output)
+  (test-ocr-easyocr-line-filter)
   (test-ocr-result-conversion)
   (test-ocr-provider-missing-result)
   (check-report))

@@ -313,18 +313,88 @@
 (define (ocr-easyocr-command image-path)
   (let ((script
           (string-append
-            "import easyocr, sys\n"
+            "import easyocr, re, sys\n"
+            "COMMON = set('the of and to in is as that with for an a this which are be by from on or we use if true fixed unknown policy algorithm problem provided prior set input denoted produces series agent policies term represent optimal reward regret function defined collaborates across episodes instead however exactly subset potential partner'.split())\n"
+            "def keep_line(line):\n"
+            "    words = [w.lower().strip(\"'\") for w in re.findall(r\"[A-Za-z][A-Za-z']+\", line)]\n"
+            "    if len(line.strip()) < 12:\n"
+            "        return False\n"
+            "    hits = sum(1 for w in words if w in COMMON)\n"
+            "    return hits >= 1 and len(words) >= 2\n"
+            "def to_lines(result):\n"
+            "    items = []\n"
+            "    for box, text, conf in result:\n"
+            "        text = text.strip()\n"
+            "        if not text:\n"
+            "            continue\n"
+            "        xs = [p[0] for p in box]\n"
+            "        ys = [p[1] for p in box]\n"
+            "        items.append({'x': min(xs), 'y': sum(ys) / len(ys), 'h': max(1, max(ys) - min(ys)), 'text': text})\n"
+            "    items.sort(key=lambda it: (it['y'], it['x']))\n"
+            "    groups = []\n"
+            "    for it in items:\n"
+            "        if groups and abs(it['y'] - groups[-1]['y']) <= max(12, min(28, groups[-1]['h'] * 0.8)):\n"
+            "            g = groups[-1]\n"
+            "            g['items'].append(it)\n"
+            "            g['y'] = sum(x['y'] for x in g['items']) / len(g['items'])\n"
+            "            g['h'] = max(g['h'], it['h'])\n"
+            "        else:\n"
+            "            groups.append({'y': it['y'], 'h': it['h'], 'items': [it]})\n"
+            "    lines = []\n"
+            "    for g in groups:\n"
+            "        line = ' '.join(it['text'] for it in sorted(g['items'], key=lambda it: it['x']))\n"
+            "        if keep_line(line):\n"
+            "            lines.append(line)\n"
+            "    return lines\n"
             "reader = easyocr.Reader(['en'], gpu="
             (if (ocr-easyocr-gpu-available?) "True" "False")
             ", verbose=False)\n"
-            "result = reader.readtext(sys.argv[1], detail=0, paragraph=True)\n"
-            "print('\\n\\n'.join(result))")))
+            "result = reader.readtext(sys.argv[1], detail=1, paragraph=False)\n"
+            "print('\\n'.join(to_lines(result)))")))
     (ocr-command-with-tool-libraries
       "p2t"
       (ocr-tool-python-command-with-args "p2t" script (list image-path)))))
 
 (define (ocr-run-easyocr image-path)
   (ocr-run-command-to-file (ocr-easyocr-command image-path)))
+
+(define ocr-english-common-words
+  '("the" "of" "and" "to" "in" "is" "as" "that" "with" "for" "an" "a"
+    "this" "which" "are" "be" "by" "from" "on" "or" "we" "use" "if"
+    "true" "fixed" "unknown" "policy" "algorithm" "problem" "provided"
+    "prior" "set" "input" "denoted" "produces" "series" "agent"
+    "policies" "term" "represent" "optimal" "reward" "regret"
+    "function" "defined" "collaborates" "across" "episodes" "instead"
+    "however" "exactly" "subset" "potential" "partner"))
+
+(define (ocr-ascii-alpha? c)
+  (let ((n (char->integer c)))
+    (or (and (>= n (char->integer #\A)) (<= n (char->integer #\Z)))
+        (and (>= n (char->integer #\a)) (<= n (char->integer #\z))))))
+
+(define (ocr-line-words line)
+  (let* ((chars (string->list (force-string line)))
+         (flush (lambda (word words)
+                  (if (null? word)
+                      words
+                      (cons (list->string (reverse word)) words)))))
+    (let loop ((rest chars) (word '()) (words '()))
+      (cond ((null? rest)
+             (reverse (flush word words)))
+            ((ocr-ascii-alpha? (car rest))
+             (loop (cdr rest) (cons (car rest) word) words))
+            (else
+             (loop (cdr rest) '() (flush word words)))))))
+
+(define-public (ocr-keep-easyocr-text-line? line)
+  (let* ((line* (tm-string-trim-both (force-string line)))
+         (words (map string-downcase (ocr-line-words line*)))
+         (hits (length (list-filter words
+                         (lambda (word)
+                           (in? word ocr-english-common-words))))))
+    (and (>= (string-length line*) 12)
+         (>= (length words) 2)
+         (>= hits 1))))
 
 (define (ocr-output-body output)
   (let* ((text (force-string output))
