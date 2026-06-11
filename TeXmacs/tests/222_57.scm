@@ -64,6 +64,15 @@
            "INFO: loading\nIn image: /tmp/a.png\nOuts: \n\\frac{a}{b}\ncost: 0.1\n")
          => "\\frac{a}{b}"))
 
+(define (test-ocr-clean-output-preserves-structured-markdown)
+  (check (ocr-clean-output
+           (string-append "INFO: loading\n"
+                          "MOGAN_OCR_MARKDOWN_BEGIN\n"
+                          "Text\n\n"
+                          "$$x+1$$\n\n"
+                          "![](/tmp/formula.png)\n"))
+         => "Text\n\n$$x+1$$\n\n![](/tmp/formula.png)"))
+
 (define (test-ocr-easyocr-line-filter)
   (check (ocr-keep-easyocr-text-line?
            "V(p,t) = Eah~H(shh)bh~T(shh) H-1 YhE(r (Sh; ahs bh))")
@@ -100,6 +109,7 @@
   (test-ocr-pix2text-tool-paths)
   (test-ocr-paddleocr-probe)
   (test-ocr-clean-output)
+  (test-ocr-clean-output-preserves-structured-markdown)
   (test-ocr-easyocr-line-filter)
   (test-ocr-result-conversion)
   (test-ocr-provider-missing-result)
