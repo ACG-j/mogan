@@ -26,6 +26,11 @@
   (check (ocr-provider-format "rapid-latex-ocr" #f)
          => "latex"))
 
+(define (test-ocr-pix2text-gpu-probe)
+  (when (ocr-command-available? "p2t")
+    (check (boolean? (ocr-pix2text-gpu-available?))
+           => #t)))
+
 (define (test-ocr-clean-output)
   (check (ocr-clean-output
            "INFO: loading\nIn image: /tmp/a.png\nOuts: \n\\frac{a}{b}\ncost: 0.1\n")
@@ -51,6 +56,7 @@
 
 (tm-define (test_222_57)
   (test-ocr-provider-format)
+  (test-ocr-pix2text-gpu-probe)
   (test-ocr-clean-output)
   (test-ocr-result-conversion)
   (test-ocr-provider-missing-result)

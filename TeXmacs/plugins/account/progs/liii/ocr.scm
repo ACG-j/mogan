@@ -35,29 +35,85 @@
 (define (ocr-python-command script)
   (string-append "python -c " (ocr-shell-quote script)))
 
+(define (ocr-tool-python-command tool script)
+  (string-append "tool_path=$(command -v "
+                 (ocr-shell-quote tool)
+                 "); tool_python=$(sed -n '1s/^#!//p' \"$tool_path\"); "
+                 "\"$tool_python\" -c "
+                 (ocr-shell-quote script)))
+
+(define (ocr-tool-python-site-library tool)
+  (ocr-command-output
+    (ocr-tool-python-command
+      tool
+      "import sysconfig; print(sysconfig.get_paths()['purelib'])")))
+
+(define (ocr-tool-library-path tool)
+  (let ((site-library (ocr-tool-python-site-library tool)))
+    (if (== site-library "")
+        ""
+        (ocr-command-output
+          (string-append "find "
+                         (ocr-shell-quote (string-append site-library "/nvidia"))
+                         " -type d -name lib 2>/dev/null | paste -sd ':' -")))))
+
+(define (ocr-command-with-tool-libraries tool command)
+  (let ((library-path (ocr-tool-library-path tool)))
+    (if (== library-path "")
+        command
+        (string-append "LD_LIBRARY_PATH="
+                       (ocr-shell-quote
+                         (if (== (getenv "LD_LIBRARY_PATH" "") "")
+                             library-path
+                             (string-append library-path ":"
+                                            (getenv "LD_LIBRARY_PATH" ""))))
+                       " "
+                       command))))
+
 (define (ocr-python-string s)
   (string-append "'" s "'"))
 
-(define (ocr-python-module-available? module-name)
+(define (ocr-python-module-available-with command-maker module-name)
   (and (ocr-command-available? "python")
        (== (ocr-command-output
-             (ocr-python-command
+             (command-maker
                (string-append "import importlib.util; "
                               "print('yes' if importlib.util.find_spec("
                               (ocr-python-string module-name)
                               ") else 'no')")))
            "yes")))
 
+(define (ocr-python-module-available? module-name)
+  (ocr-python-module-available-with ocr-python-command module-name))
+
+(define (ocr-python-cuda-available-with command-maker)
+  (and (== (ocr-command-output
+             (command-maker
+               "import torch; print('yes' if torch.cuda.is_available() else 'no')"))
+           "yes")))
+
+(define (ocr-onnx-cuda-available-with command-maker)
+  (and (== (ocr-command-output
+             (command-maker
+               (string-append "import onnxruntime as ort; "
+                              "print('yes' if 'CUDAExecutionProvider' in "
+                              "ort.get_available_providers() else 'no')")))
+           "yes")))
+
 (define-public (ocr-gpu-available?)
-  (or (ocr-python-module-available? "onnxruntime_gpu")
+  (or (ocr-onnx-cuda-available-with ocr-python-command)
       (and (ocr-python-module-available? "torch")
-           (== (ocr-command-output
-                 (ocr-python-command
-                   "import torch; print('yes' if torch.cuda.is_available() else 'no')"))
-               "yes"))))
+           (ocr-python-cuda-available-with ocr-python-command))))
+
+(define-public (ocr-pix2text-gpu-available?)
+  (ocr-onnx-cuda-available-with
+    (lambda (script)
+      (ocr-command-with-tool-libraries
+        "p2t"
+        (ocr-tool-python-command "p2t" script)))))
 
 (define (ocr-pix2text-device)
-  (if (ocr-gpu-available?) "gpu" "cpu"))
+  (if (ocr-pix2text-gpu-available?) "gpu" "cpu"))
 
 (define-public (ocr-available-providers)
   (let ((providers '()))
@@ -90,14 +146,16 @@
         (else "verbatim")))
 
 (define (ocr-pix2text-command image-path formula?)
-  (string-append "p2t predict -l "
-                 (ocr-shell-quote (get-preference "ocr.languages"))
-                 " --device "
-                 (ocr-pix2text-device)
-                 " --file-type "
-                 (if formula? "formula" "text_formula")
-                 " -i "
-                 (ocr-shell-quote image-path)))
+  (ocr-command-with-tool-libraries
+    "p2t"
+    (string-append "p2t predict -l "
+                   (ocr-shell-quote (get-preference "ocr.languages"))
+                   " --device "
+                   (ocr-pix2text-device)
+                   " --file-type "
+                   (if formula? "formula" "text_formula")
+                   " -i "
+                   (ocr-shell-quote image-path))))
 
 (define (ocr-rapidlatex-command image-path)
   (string-append "rapid_latex_ocr " (ocr-shell-quote image-path)))
