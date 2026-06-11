@@ -215,6 +215,20 @@
                                 ") else 'no')"))))
            "yes")))
 
+(define-public (ocr-paddleocr-available?)
+  (and (ocr-command-available? "paddleocr")
+       (== (ocr-command-output
+             (ocr-shell-command
+               (ocr-tool-python-command
+                 "paddleocr"
+                 (string-append "import importlib.util; "
+                                "print('yes' if importlib.util.find_spec("
+                                (ocr-python-string "paddleocr")
+                                ") and importlib.util.find_spec("
+                                (ocr-python-string "paddle")
+                                ") else 'no')"))))
+           "yes")))
+
 (define (ocr-easyocr-gpu-available?)
   (and (ocr-easyocr-available?)
        (ocr-python-cuda-available-with
@@ -229,6 +243,8 @@
 
 (define-public (ocr-available-providers)
   (let ((providers '()))
+    (when (ocr-paddleocr-available?)
+      (set! providers (cons "paddleocr" providers)))
     (when (ocr-easyocr-available?)
       (set! providers (cons "easyocr" providers)))
     (when (ocr-command-available? "p2t")
@@ -242,6 +258,8 @@
         (available (ocr-available-providers)))
     (cond ((and (== preferred "pix2text") (in? "pix2text" available))
            "pix2text")
+          ((and (== preferred "paddleocr") (in? "paddleocr" available))
+           "paddleocr")
           ((and (== preferred "easyocr") (in? "easyocr" available))
            "easyocr")
           ((and (== preferred "rapid-latex-ocr")
@@ -249,6 +267,8 @@
            "rapid-latex-ocr")
           ((and formula? (in? "rapid-latex-ocr" available))
            "rapid-latex-ocr")
+          ((and (not formula?) (in? "paddleocr" available))
+           "paddleocr")
           ((and (not formula?) (in? "easyocr" available))
            "easyocr")
           ((in? "pix2text" available)
@@ -260,6 +280,7 @@
 (define-public (ocr-provider-format provider formula?)
   (cond ((== provider "pix2text")
          (if formula? "latex" "markdown"))
+        ((== provider "paddleocr") "markdown")
         ((== provider "easyocr") "markdown")
         ((== provider "rapid-latex-ocr") "latex")
         (else "verbatim")))
@@ -358,6 +379,36 @@
 (define (ocr-run-easyocr image-path)
   (ocr-run-command-to-file (ocr-easyocr-command image-path)))
 
+(define (ocr-paddleocr-command image-path)
+  (let ((script
+          (string-append
+            "import os, sys\n"
+            "os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')\n"
+            "from paddleocr import PPStructureV3\n"
+            "try:\n"
+            "    import paddle\n"
+            "    device = 'gpu' if paddle.device.is_compiled_with_cuda() else 'cpu'\n"
+            "except Exception:\n"
+            "    device = 'cpu'\n"
+            "pipeline = PPStructureV3(device=device, use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)\n"
+            "texts = []\n"
+            "for res in pipeline.predict(sys.argv[1]):\n"
+            "    md = getattr(res, 'markdown', None)\n"
+            "    if isinstance(md, dict):\n"
+            "        text = md.get('markdown_texts') or md.get('markdown_text') or ''\n"
+            "    else:\n"
+            "        text = str(md or '')\n"
+            "    if text.strip():\n"
+            "        texts.append(text.strip())\n"
+            "print('MOGAN_OCR_MARKDOWN_BEGIN')\n"
+            "print('\\n\\n'.join(texts))")))
+    (string-append "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True "
+                   (ocr-tool-python-command-with-args
+                     "paddleocr" script (list image-path)))))
+
+(define (ocr-run-paddleocr image-path)
+  (ocr-run-command-to-file (ocr-paddleocr-command image-path)))
+
 (define ocr-english-common-words
   '("the" "of" "and" "to" "in" "is" "as" "that" "with" "for" "an" "a"
     "this" "which" "are" "be" "by" "from" "on" "or" "we" "use" "if"
@@ -398,10 +449,14 @@
 
 (define (ocr-output-body output)
   (let* ((text (force-string output))
+         (markdown-parts
+           (string-decompose text "MOGAN_OCR_MARKDOWN_BEGIN"))
          (parts (string-decompose text "Outs:")))
-    (if (> (length parts) 1)
+    (if (> (length markdown-parts) 1)
+        (string-recompose (cdr markdown-parts) "MOGAN_OCR_MARKDOWN_BEGIN")
+        (if (> (length parts) 1)
         (string-recompose (cdr parts) "Outs:")
-        text)))
+        text))))
 
 (define-public (ocr-clean-output output)
   (let* ((trimmed (tm-string-trim-both (ocr-output-body output)))
@@ -426,6 +481,13 @@
   (ocr-clean-output
     (cond ((== provider "pix2text")
            (ocr-run-pix2text image-path formula?))
+          ((== provider "paddleocr")
+           (let ((output (ocr-run-paddleocr image-path)))
+             (if (== (tm-string-trim-both output) "")
+                 (if (ocr-easyocr-available?)
+                     (ocr-run-easyocr image-path)
+                     (ocr-run-pix2text image-path formula?))
+                 output)))
           ((== provider "easyocr")
            (let ((output (ocr-run-easyocr image-path)))
              (if (== (tm-string-trim-both output) "")
@@ -439,10 +501,11 @@
   (string-append
     "OCR backend not found.\n\n"
     "Install one local backend and try smart paste again:\n\n"
+    "- PaddleOCR: pip install paddleocr paddlepaddle\n"
     "- Pix2Text: pip install pix2text\n"
     "- EasyOCR: pip install easyocr\n"
     "- RapidLaTeXOCR: pip install rapid_latex_ocr\n\n"
-    "EasyOCR is preferred for text screenshots, Pix2Text for mixed text and formulas; RapidLaTeXOCR is a "
+    "PaddleOCR is preferred for structured screenshots, Pix2Text for mixed text and formulas; RapidLaTeXOCR is a "
     "lightweight formula-only fallback. If GPU runtime packages are installed, "
     "the Python backend can use them outside the application process."))
 
