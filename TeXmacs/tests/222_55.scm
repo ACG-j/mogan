@@ -40,7 +40,35 @@
     (check (string-contains? source "plugins/account/data/md.tex")
            => #f)))
 
+(define (test-markdown-snippet-converter)
+  (let* ((input "# Formula\n\n- $\\frac{a}{b}$\n\nPlain text.")
+         (tree (generic->texmacs input "markdown-snippet"))
+         (serialized (object->string (tree->stree tree))))
+    (check (string-contains? serialized "bad format or data")
+           => #f)
+    (check (string-contains? serialized "Formula")
+           => #t)
+    (check (string-contains? serialized "Plain text")
+           => #t)))
+
+(define (test-markdown-snippet-converter-with-llm-output)
+  (let* ((input (string-append "区域 A 上的积分为：\n\n"
+                               "$$\\iint_A 1\\,dA = area(A).$$\n\n"
+                               "计算面积：\n\n"
+                               "- 当 $0 \\le x \\le \\frac12$ 时，$y$ 从 0 到 2。\n"
+                               "- 当 $\\frac12 \\le x \\le 2$ 时，$y$ 从 0 到 $\\frac1x$。\n\n"
+                               "因此\n\n"
+                               "$$area(A)=1+2\\ln 2.$$"))
+         (tree (generic->texmacs input "markdown-snippet"))
+         (serialized (object->string (tree->stree tree))))
+    (check (string-contains? serialized "bad format or data")
+           => #f)
+    (check (string-starts? serialized "(document")
+           => #t)))
+
 (tm-define (test_222_55)
   (test-smart-paste-detect-text-format)
   (test-paste-as-markdown-does-not-insert-upsell)
+  (test-markdown-snippet-converter)
+  (test-markdown-snippet-converter-with-llm-output)
   (check-report))
