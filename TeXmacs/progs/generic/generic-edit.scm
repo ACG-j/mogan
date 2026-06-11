@@ -1264,19 +1264,7 @@
 ) ;tm-define
 
 (tm-define (paste-as-html)
-  (with source-format
-    (qt-clipboard-format)
-    (if (string=? source-format "html")
-      (let* ((fm (format-determine (qt-clipboard-text) "verbatim")))
-        (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
-              ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
-              ((string=? fm "verbatim") (kbd-paste))
-              ((string=? fm "markdown") (paste-as-markdown))
-        ) ;cond
-      ) ;let*
-      (clipboard-paste-import "html" "primary")
-    ) ;if
-  ) ;with
+  (clipboard-paste-import "html" "primary")
 ) ;tm-define
 
 (tm-define (paste-as-markdown)
@@ -1326,19 +1314,62 @@
 ;; 语法
 ;; (smart-format-paste)
 
+(define (smart-paste-markdown-text? text)
+  (and (string? text)
+    (let* ((s (string-trim-spaces text)))
+      (and (not (string-null? s))
+        (or (string-starts? s "# ")
+          (string-starts? s "## ")
+          (string-starts? s "### ")
+          (string-starts? s "```")
+          (string-starts? s "> ")
+          (string-contains? text "\n# ")
+          (string-contains? text "\n## ")
+          (string-contains? text "\n```")
+          (string-contains? text "\n- ")
+          (string-contains? text "\n* ")
+          (string-contains? text "\n1. ")
+          (string-contains? text "**")
+          (string-contains? text "](")
+          (string-contains? text "\n|")
+        ) ;or
+      ) ;and
+    ) ;let*
+  ) ;and
+) ;define
+
+(tm-define (smart-paste-detect-text-format text)
+  (if (not (string? text))
+    "verbatim"
+    (let ((fm (format-determine text "verbatim")))
+      (cond ((string=? fm "html") "html")
+            ((smart-paste-markdown-text? text) "markdown")
+            ((string=? fm "latex") "latex")
+            (else "verbatim")
+      ) ;cond
+    ) ;let
+  ) ;if
+) ;tm-define
+
+(define (smart-paste-apply-format fm)
+  (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
+        ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
+        ((string=? fm "markdown") (paste-as-markdown))
+        ((string=? fm "internal") (paste-as-texmacs))
+        ((string=? fm "image") (ocr-paste))
+        (else (kbd-paste-verbatim))
+  ) ;cond
+) ;define
+
 (tm-define (smart-format-paste)
   (with source-format
     (qt-clipboard-format)
-    (cond ((or (string=? source-format "verbatim") (string=? source-format "html"))
-           (let* ((fm (format-determine (qt-clipboard-text) "verbatim")))
-             (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
-                   ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
-                   ((string=? fm "verbatim") (kbd-paste))
-                   ((string=? fm "markdown") (paste-as-markdown))
-             ) ;cond
-           ) ;let*
-          ) ;
+    (cond ((string-starts? source-format "image") (ocr-paste))
           ((string=? source-format "texmacs-snippet") (paste-as-texmacs))
+          ((string=? source-format "html") (clipboard-paste-import "html" "primary"))
+          ((string=? source-format "verbatim")
+           (smart-paste-apply-format (smart-paste-detect-text-format (qt-clipboard-text)))
+          ) ;
           (else (kbd-paste-verbatim))
     ) ;cond
   ) ;with

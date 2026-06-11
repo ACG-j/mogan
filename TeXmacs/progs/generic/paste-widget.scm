@@ -30,7 +30,7 @@
 ) ;define
 
 (define (convert-format-string-to-symbol name)
-  (cond ((== name "Markdown") "md")
+  (cond ((== name "Markdown") "markdown")
         ((== name "HTML") "html")
         ((== name "LaTeX") "latex")
         ((== name (translate "Plain text")) "verbatim")
@@ -45,7 +45,7 @@
 ) ;define
 
 (define (convert-symbol-to-format-string symbol)
-  (cond ((== symbol "md") "Markdown")
+  (cond ((or (== symbol "md") (== symbol "markdown")) "Markdown")
         ((== symbol "html") "HTML")
         ((== symbol "latex") "LaTeX")
         ((== symbol "mathml") "MathML")
@@ -61,7 +61,7 @@
 ) ;define
 
 (define (get-tips fm)
-  (cond ((== fm "md") "Insert clipboard content as 'Markdown'")
+  (cond ((or (== fm "md") (== fm "markdown")) "Insert clipboard content as 'Markdown'")
         ((== fm "html") "Insert clipboard content as 'HTML'")
         ((== fm "latex") "Insert clipboard content as 'LaTeX'")
         ((== fm "verbatim") "Insert clipboard content as 'plain text'")
@@ -80,9 +80,7 @@
 (define (get-clipboard-format)
   (let* ((fm1 (qt-clipboard-format)))
     (cond ((== fm1 "verbatim")
-           (let* ((raw-text (qt-clipboard-text)) (fm2 (format-determine raw-text "verbatim")))
-             fm2
-           ) ;let*
+           (smart-paste-detect-text-format (qt-clipboard-text))
           ) ;
           ((== fm1 "texmacs-snippet") "internal")
           ((string-starts? fm1 "image") "image")
@@ -202,7 +200,7 @@
   (define callback
     (lambda (fm)
       (when fm
-        (cond ((== fm "md") (paste-as-markdown))
+        (cond ((or (== fm "md") (== fm "markdown")) (paste-as-markdown))
               ((== fm "ocr") (ocr-paste))
               ((== fm "image_and_ocr") (image-and-ocr-paste))
               ((== fm "image") (kbd-paste))
