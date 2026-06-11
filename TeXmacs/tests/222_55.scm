@@ -35,6 +35,12 @@
   (check (smart-paste-detect-text-format #f)
          => "verbatim"))
 
+(define (test-paste-as-markdown-does-not-insert-upsell)
+  (let* ((source (string-load (unix->url "$TEXMACS_PATH/progs/generic/generic-edit.scm"))))
+    (check (string-contains? source "plugins/account/data/md.tex")
+           => #f)))
+
 (tm-define (test_222_55)
   (test-smart-paste-detect-text-format)
+  (test-paste-as-markdown-does-not-insert-upsell)
   (check-report))

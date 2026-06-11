@@ -1268,20 +1268,7 @@
 ) ;tm-define
 
 (tm-define (paste-as-markdown)
-  (if (community-stem?)
-    (begin
-      (clipboard-paste-import "verbatim" "primary")
-      (kbd-return)
-      (let* ((latex-code (string-load (unix->url "$TEXMACS_PATH/plugins/account/data/md.tex"))
-             ) ;latex-code
-             (parsed-latex (parse-latex latex-code))
-             (texmacs-latex (latex->texmacs parsed-latex))
-            ) ;
-        (insert texmacs-latex)
-      ) ;let*
-    ) ;begin
-    (clipboard-paste-import "markdown" "primary")
-  ) ;if
+  (clipboard-paste-import "markdown" "primary")
 ) ;tm-define
 
 ;; paste-as-texmacs
