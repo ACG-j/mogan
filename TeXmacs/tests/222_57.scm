@@ -90,6 +90,16 @@
     (check (string-contains? serialized "frac")
            => #t)))
 
+(define (test-ocr-result-conversion-with-image-placeholder)
+  (let* ((tree (ocr-result->texmacs
+                 "Text\n\nMOGAN_OCR_IMAGE:/tmp/formula.png\t120px\n\nMore"
+                 "markdown"))
+         (serialized (object->string (tree->stree tree))))
+    (check (string-contains? serialized "(image \"/tmp/formula.png\" \"120px\"")
+           => #t)
+    (check (string-contains? serialized "MOGAN_OCR_IMAGE")
+           => #f)))
+
 (define (test-ocr-provider-missing-result)
   (when (and (not (ocr-command-available? "p2t"))
              (not (ocr-command-available? "rapid_latex_ocr")))
@@ -112,5 +122,6 @@
   (test-ocr-clean-output-preserves-structured-markdown)
   (test-ocr-easyocr-line-filter)
   (test-ocr-result-conversion)
+  (test-ocr-result-conversion-with-image-placeholder)
   (test-ocr-provider-missing-result)
   (check-report))

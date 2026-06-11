@@ -20,6 +20,7 @@
 (define temp-dir (os-temp-dir))
 (define ocr-default-languages "en,ch_sim")
 (define ocr-temp-counter 0)
+(define ocr-image-placeholder-prefix "MOGAN_OCR_IMAGE:")
 
 (define-preferences
   ("ocr.provider" "auto" noop)
@@ -519,6 +520,12 @@
             "            out.append(text[i])\n"
             "            i += 1\n"
             "    return ''.join(out)\n"
+            "def content_has_math(text):\n"
+            "    text = str(text or '')\n"
+            "    if '$' in text or '\\\\' in text:\n"
+            "        return True\n"
+            "    math_chars = set('∫∑∏√≤≥≠≈∞∈∉⊂⊆∪∩×÷±∂∇θλμπσωΩαβγ')\n"
+            "    return any(ch in math_chars for ch in text)\n"
             "source_image = None\n"
             "def crop_block(image_path, bbox):\n"
             "    global source_image\n"
@@ -537,9 +544,14 @@
             "        out = tempfile.NamedTemporaryFile(prefix='mogan-ocr-formula-', suffix='.png', delete=False)\n"
             "        out.close()\n"
             "        source_image.crop((x1, y1, x2, y2)).save(out.name)\n"
-            "        return out.name\n"
+            "        return out.name, max(1, x2 - x1)\n"
             "    except Exception:\n"
             "        return None\n"
+            "def image_placeholder(crop):\n"
+            "    if not crop:\n"
+            "        return None\n"
+            "    path, width = crop\n"
+            "    return 'MOGAN_OCR_IMAGE:' + path + '\\t' + str(width) + 'px'\n"
             "def block_sort_key(item):\n"
             "    index, block = item\n"
             "    bbox = bbox_of(block) or [0, 0, 0, 0]\n"
@@ -564,13 +576,17 @@
             "        return ''\n"
             "    bbox = bbox_of(block)\n"
             "    if label == 'formula':\n"
+            "        crop = crop_block(image_path, bbox)\n"
+            "        if crop:\n"
+            "            return image_placeholder(crop)\n"
             "        formula = strip_formula_delimiters(content)\n"
             "        if formula_looks_valid(formula, bbox):\n"
             "            return '$$' + formula + '$$'\n"
+            "        return '`' + content.replace('`', \"'\") + '`'\n"
+            "    if content_has_math(content):\n"
             "        crop = crop_block(image_path, bbox)\n"
             "        if crop:\n"
-            "            return '![](' + crop + ')'\n"
-            "        return '`' + content.replace('`', \"'\") + '`'\n"
+            "            return image_placeholder(crop)\n"
             "    return sanitize_markdown_math(content)\n"
             "def result_to_markdown(image_path, res):\n"
             "    blocks = field(res, 'parsing_res_list') or []\n"
@@ -708,11 +724,67 @@
 (define (ocr-insert-message message)
   (insert (generic->texmacs message "markdown-snippet")))
 
+(define (ocr-image-placeholder-line? line)
+  (string-starts? (tm-string-trim-both (force-string line))
+                  ocr-image-placeholder-prefix))
+
+(define (ocr-image-placeholder-path line)
+  (let* ((body (string-drop (tm-string-trim-both (force-string line))
+                            (string-length ocr-image-placeholder-prefix)))
+         (parts (string-split body #\tab)))
+    (if (null? parts) body (car parts))))
+
+(define (ocr-image-placeholder-width line)
+  (let* ((body (string-drop (tm-string-trim-both (force-string line))
+                            (string-length ocr-image-placeholder-prefix)))
+         (parts (string-split body #\tab)))
+    (if (> (length parts) 1) (cadr parts) "")))
+
+(define (ocr-markdown-lines->texmacs lines)
+  (let* ((markdown (tm-string-trim-both (string-recompose lines "\n"))))
+    (if (== markdown "")
+        #f
+        (generic->texmacs markdown "markdown-snippet"))))
+
+(define (ocr-image-node path width)
+  (stree->tree `(image ,path ,width "" "" "")))
+
+(define (ocr-structured-markdown->texmacs result)
+  (let* ((lines (string-split (force-string result) #\newline)))
+    (stree->tree
+      `(document
+         ,@(let loop ((rest lines) (pending '()) (nodes '()))
+             (cond ((null? rest)
+                    (let ((node (ocr-markdown-lines->texmacs
+                                  (reverse pending))))
+                      (reverse (if node
+                                   (cons (tree->stree node) nodes)
+                                   nodes))))
+                   ((ocr-image-placeholder-line? (car rest))
+                    (let* ((node (ocr-markdown-lines->texmacs
+                                   (reverse pending)))
+                           (nodes* (if node
+                                       (cons (tree->stree node) nodes)
+                                       nodes))
+                           (image-path (ocr-image-placeholder-path
+                                         (car rest)))
+                           (image-width (ocr-image-placeholder-width
+                                          (car rest))))
+                      (loop (cdr rest)
+                            '()
+                            (cons (tree->stree
+                                    (ocr-image-node image-path image-width))
+                                  nodes*))))
+                   (else
+                    (loop (cdr rest)
+                          (cons (car rest) pending)
+                          nodes))))))))
+
 (define-public (ocr-result->texmacs result format)
   (cond ((== format "latex")
          (latex->texmacs (parse-latex result)))
         ((== format "markdown")
-         (generic->texmacs result "markdown-snippet"))
+         (ocr-structured-markdown->texmacs result))
         (else
          (generic->texmacs result "verbatim"))))
 
