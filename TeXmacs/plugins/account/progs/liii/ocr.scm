@@ -15,9 +15,11 @@
 (import (liii os))
 (import (liii base64))
 (import (liii time))
+(import (liii path))
 
 (define temp-dir (os-temp-dir))
 (define ocr-default-languages "en,ch_sim")
+(define ocr-temp-counter 0)
 
 (define-preferences
   ("ocr.provider" "auto" noop)
@@ -27,42 +29,122 @@
   (and (string? cmd) (url-exists-in-path? cmd)))
 
 (define (ocr-command-output cmd)
-  (tm-string-trim-both (eval-system (string-append cmd " 2>&1"))))
+  (tm-string-trim-both (eval-system cmd)))
+
+(define (ocr-command-error cmd)
+  (tm-string-trim-both (check-stderr cmd)))
 
 (define-public (ocr-shell-quote s)
   (string-quote s))
 
+(define (ocr-sh-quote s)
+  (string-append "'"
+                 (string-replace (force-string s) "'" "'\"'\"'")
+                 "'"))
+
+(define (ocr-temp-path prefix suffix)
+  (set! ocr-temp-counter (+ ocr-temp-counter 1))
+  (string-append temp-dir
+                 "/"
+                 prefix
+                 "-"
+                 (number->string (getpid))
+                 "-"
+                 (number->string (current-time))
+                 "-"
+                 (number->string ocr-temp-counter)
+                 suffix))
+
+(define (ocr-shell-command cmd)
+  (let ((script-path (ocr-temp-path "mogan-ocr" ".sh")))
+    (string-save (string-append "#!/bin/sh\n" cmd "\n") script-path)
+    (string-append "sh " script-path)))
+
 (define (ocr-python-command script)
-  (string-append "python -c " (ocr-shell-quote script)))
+  (ocr-shell-command
+    (string-append "python -c " (ocr-sh-quote script))))
+
+(define (ocr-path-parent-name path)
+  (let* ((path* (force-string path))
+         (len (string-length path*))
+         (end (if (and (> len 1)
+                       (char=? (string-ref path* (- len 1)) #\/))
+                  (- len 1)
+                  len)))
+    (let loop ((i (- end 1)))
+      (cond ((<= i 0)
+             (if (and (> end 0) (char=? (string-ref path* 0) #\/))
+                 "/"
+                 "."))
+            ((char=? (string-ref path* i) #\/)
+             (substring path* 0 i))
+            (else (loop (- i 1)))))))
+
+(define (ocr-existing-path paths)
+  (cond ((null? paths) "")
+        ((file-exists? (car paths)) (car paths))
+        (else (ocr-existing-path (cdr paths)))))
+
+(define (ocr-tool-python-path tool)
+  (let* ((path-dirs (string-decompose (getenv "PATH" "") ":"))
+         (candidates (map (lambda (dir) (path-join dir tool)) path-dirs))
+         (tool-path (ocr-existing-path candidates))
+         (script (if (file-exists? tool-path)
+                     (string-load tool-path)
+                     ""))
+         (lines (string-split script #\newline))
+         (first-line (if (null? lines) "" (car lines))))
+    (if (string-starts? first-line "#!")
+        (string-drop first-line 2)
+        "")))
 
 (define (ocr-tool-python-command tool script)
-  (string-append "tool_path=$(command -v "
-                 (ocr-shell-quote tool)
-                 "); tool_python=$(sed -n '1s/^#!//p' \"$tool_path\"); "
-                 "\"$tool_python\" -c "
-                 (ocr-shell-quote script)))
-
-(define (ocr-tool-python-site-library tool)
-  (ocr-command-output
-    (ocr-tool-python-command
-      tool
-      "import sysconfig; print(sysconfig.get_paths()['purelib'])")))
-
-(define (ocr-tool-library-path tool)
-  (let ((site-library (ocr-tool-python-site-library tool)))
-    (if (== site-library "")
+  (let ((tool-python (ocr-tool-python-path tool)))
+    (if (== tool-python "")
         ""
-        (ocr-command-output
-          (string-append "find "
-                         (ocr-shell-quote (string-append site-library "/nvidia"))
-                         " -type d -name lib 2>/dev/null | paste -sd ':' -")))))
+        (string-append (ocr-shell-quote tool-python)
+                       " -c "
+                       (ocr-sh-quote script)))))
+
+(define-public (ocr-tool-python-site-library tool)
+  (let* ((tool-python (ocr-tool-python-path tool))
+         (venv-root (if (== tool-python "")
+                        ""
+                        (ocr-path-parent-name
+                          (ocr-path-parent-name tool-python))))
+         (lib-root (if (== venv-root "") "" (path-join venv-root "lib")))
+         (entries (if (file-exists? lib-root)
+                      (vector->list (path-list lib-root))
+                      '()))
+         (python-dirs (list-filter entries
+                        (lambda (entry)
+                          (string-starts? entry "python"))))
+         (site-dirs (list-filter
+                      (map (lambda (entry)
+                             (path-join lib-root entry "site-packages"))
+                           python-dirs)
+                      file-exists?)))
+    (if (null? site-dirs) "" (car site-dirs))))
+
+(define-public (ocr-tool-library-path tool)
+  (let ((site-library (ocr-tool-python-site-library tool)))
+    (if (or (== site-library "")
+            (not (file-exists? (string-append site-library "/nvidia"))))
+        ""
+        (let* ((nvidia-root (string-append site-library "/nvidia"))
+               (entries (vector->list (path-list nvidia-root)))
+               (lib-dirs (map (lambda (entry)
+                                (path-join nvidia-root entry "lib"))
+                              entries))
+               (existing (list-filter lib-dirs file-exists?)))
+          (string-recompose existing ":")))))
 
 (define (ocr-command-with-tool-libraries tool command)
   (let ((library-path (ocr-tool-library-path tool)))
     (if (== library-path "")
         command
         (string-append "LD_LIBRARY_PATH="
-                       (ocr-shell-quote
+                       (ocr-sh-quote
                          (if (== (getenv "LD_LIBRARY_PATH" "") "")
                              library-path
                              (string-append library-path ":"
@@ -71,7 +153,7 @@
                        command))))
 
 (define (ocr-python-string s)
-  (string-append "'" s "'"))
+  (string-append "\"" s "\""))
 
 (define (ocr-python-module-available-with command-maker module-name)
   (and (ocr-command-available? "python")
@@ -89,15 +171,15 @@
 (define (ocr-python-cuda-available-with command-maker)
   (and (== (ocr-command-output
              (command-maker
-               "import torch; print('yes' if torch.cuda.is_available() else 'no')"))
+               "print(('no','yes')[__import__('torch').cuda.is_available()])"))
            "yes")))
 
 (define (ocr-onnx-cuda-available-with command-maker)
   (and (== (ocr-command-output
              (command-maker
-               (string-append "import onnxruntime as ort; "
-                              "print('yes' if 'CUDAExecutionProvider' in "
-                              "ort.get_available_providers() else 'no')")))
+               (string-append
+                 "print(('no','yes')[__import__('onnxruntime')."
+                 "get_available_providers().__contains__('CUDAExecutionProvider')])")))
            "yes")))
 
 (define-public (ocr-gpu-available?)
@@ -108,9 +190,10 @@
 (define-public (ocr-pix2text-gpu-available?)
   (ocr-onnx-cuda-available-with
     (lambda (script)
-      (ocr-command-with-tool-libraries
-        "p2t"
-        (ocr-tool-python-command "p2t" script)))))
+      (ocr-shell-command
+        (ocr-command-with-tool-libraries
+          "p2t"
+          (ocr-tool-python-command "p2t" script))))))
 
 (define (ocr-pix2text-device)
   (if (ocr-pix2text-gpu-available?) "gpu" "cpu"))
@@ -146,19 +229,50 @@
         (else "verbatim")))
 
 (define (ocr-pix2text-command image-path formula?)
-  (ocr-command-with-tool-libraries
-    "p2t"
-    (string-append "p2t predict -l "
-                   (ocr-shell-quote (get-preference "ocr.languages"))
-                   " --device "
-                   (ocr-pix2text-device)
-                   " --file-type "
-                   (if formula? "formula" "text_formula")
-                   " -i "
-                   (ocr-shell-quote image-path))))
+  (ocr-shell-command
+    (ocr-command-with-tool-libraries
+      "p2t"
+      (string-append "p2t predict -l "
+                     (ocr-sh-quote (get-preference "ocr.languages"))
+                     " --device "
+                     (ocr-pix2text-device)
+                     " --file-type "
+                     (if formula? "formula" "text_formula")
+                     " -i "
+                     (ocr-sh-quote image-path)
+                     " 2>&1"))))
+
+(define (ocr-run-command-to-file command)
+  (let* ((output-path (ocr-temp-path "mogan-ocr-output" ".txt"))
+         (command*
+           (ocr-shell-command
+             (string-append command
+                            " > "
+                            (ocr-sh-quote output-path)
+                            " 2>&1"))))
+    (os-call command*)
+    (if (file-exists? output-path)
+        (string-load output-path)
+        "")))
+
+(define (ocr-run-pix2text image-path formula?)
+  (ocr-run-command-to-file
+    (ocr-command-with-tool-libraries
+      "p2t"
+      (string-append "p2t predict -l "
+                     (ocr-sh-quote (get-preference "ocr.languages"))
+                     " --device "
+                     (ocr-pix2text-device)
+                     " --file-type "
+                     (if formula? "formula" "text_formula")
+                     " -i "
+                     (ocr-sh-quote image-path)))))
 
 (define (ocr-rapidlatex-command image-path)
-  (string-append "rapid_latex_ocr " (ocr-shell-quote image-path)))
+  (string-append "rapid_latex_ocr " (ocr-sh-quote image-path)))
+
+(define (ocr-run-rapidlatex image-path)
+  (ocr-run-command-to-file (ocr-rapidlatex-command image-path)))
 
 (define (ocr-output-body output)
   (let* ((text (force-string output))
@@ -187,13 +301,12 @@
     (tm-string-trim-both (string-recompose useful "\n"))))
 
 (define (ocr-run-provider provider image-path formula?)
-  (let* ((cmd (cond ((== provider "pix2text")
-                     (ocr-pix2text-command image-path formula?))
-                    ((== provider "rapid-latex-ocr")
-                     (ocr-rapidlatex-command image-path))
-                    (else "")))
-         (output (if (== cmd "") "" (ocr-command-output cmd))))
-    (ocr-clean-output output)))
+  (ocr-clean-output
+    (cond ((== provider "pix2text")
+           (ocr-run-pix2text image-path formula?))
+          ((== provider "rapid-latex-ocr")
+           (ocr-run-rapidlatex image-path))
+          (else ""))))
 
 (define (ocr-missing-provider-message)
   (string-append

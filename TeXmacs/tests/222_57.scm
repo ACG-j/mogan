@@ -31,6 +31,16 @@
     (check (boolean? (ocr-pix2text-gpu-available?))
            => #t)))
 
+(define (test-ocr-pix2text-tool-paths)
+  (when (ocr-command-available? "p2t")
+    (let ((site-library (ocr-tool-python-site-library "p2t"))
+          (library-path (ocr-tool-library-path "p2t")))
+      (check (string? site-library) => #t)
+      (check (string? library-path) => #t)
+      (when (!= site-library "")
+        (check (string-contains? site-library "site-packages")
+               => #t)))))
+
 (define (test-ocr-clean-output)
   (check (ocr-clean-output
            "INFO: loading\nIn image: /tmp/a.png\nOuts: \n\\frac{a}{b}\ncost: 0.1\n")
@@ -57,6 +67,7 @@
 (tm-define (test_222_57)
   (test-ocr-provider-format)
   (test-ocr-pix2text-gpu-probe)
+  (test-ocr-pix2text-tool-paths)
   (test-ocr-clean-output)
   (test-ocr-result-conversion)
   (test-ocr-provider-missing-result)
