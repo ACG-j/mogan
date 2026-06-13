@@ -385,7 +385,14 @@
           (string-append
             "import os, sys, tempfile\n"
             "os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')\n"
-            "from paddleocr import PPStructureV3\n"
+            "try:\n"
+            "    from paddleocr import PaddleOCRVL\n"
+            "except Exception:\n"
+            "    PaddleOCRVL = None\n"
+            "try:\n"
+            "    from paddleocr import PPStructureV3\n"
+            "except Exception:\n"
+            "    PPStructureV3 = None\n"
             "try:\n"
             "    from PIL import Image\n"
             "except Exception:\n"
@@ -601,12 +608,51 @@
             "    else:\n"
             "        text = str(md or '')\n"
             "    return sanitize_markdown_math(text.strip())\n"
-            "pipeline = PPStructureV3(device=device, use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)\n"
+            "def json_result(res):\n"
+            "    data = getattr(res, 'json', None)\n"
+            "    if isinstance(data, dict):\n"
+            "        return data.get('res', data)\n"
+            "    return res\n"
+            "def vl_model_dir():\n"
+            "    path = os.environ.get('MOGAN_PADDLEOCR_VL_MODEL_DIR')\n"
+            "    if not path:\n"
+            "        path = os.path.expanduser('~/.paddlex/official_models/PaddleOCR-VL-1.6')\n"
+            "    if os.path.exists(os.path.join(path, 'model.safetensors')):\n"
+            "        return path\n"
+            "    return None\n"
+            "def run_paddleocr_vl(image_path):\n"
+            "    if PaddleOCRVL is None:\n"
+            "        return []\n"
+            "    model_dir = vl_model_dir()\n"
+            "    if not model_dir:\n"
+            "        return []\n"
+            "    pipeline = PaddleOCRVL(pipeline_version='v1.6', vl_rec_model_name='PaddleOCR-VL-1.6-0.9B', vl_rec_model_dir=model_dir, vl_rec_backend='native', device=device, use_doc_orientation_classify=False, use_doc_unwarping=False)\n"
+            "    texts = []\n"
+            "    for res in pipeline.predict(image_path):\n"
+            "        text = result_to_markdown(image_path, json_result(res))\n"
+            "        if text.strip():\n"
+            "            texts.append(text.strip())\n"
+            "    return texts\n"
+            "def run_ppstructure(image_path):\n"
+            "    if PPStructureV3 is None:\n"
+            "        return []\n"
+            "    pipeline = PPStructureV3(device=device, use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)\n"
+            "    texts = []\n"
+            "    for res in pipeline.predict(image_path):\n"
+            "        text = result_to_markdown(image_path, res)\n"
+            "        if text.strip():\n"
+            "            texts.append(text.strip())\n"
+            "    return texts\n"
             "texts = []\n"
-            "for res in pipeline.predict(sys.argv[1]):\n"
-            "    text = result_to_markdown(sys.argv[1], res)\n"
-            "    if text.strip():\n"
-            "        texts.append(text.strip())\n"
+            "try:\n"
+            "    texts = run_paddleocr_vl(sys.argv[1])\n"
+            "except Exception as exc:\n"
+            "    print('PaddleOCRVL failed: ' + str(exc), file=sys.stderr)\n"
+            "if not texts:\n"
+            "    try:\n"
+            "        texts = run_ppstructure(sys.argv[1])\n"
+            "    except Exception as exc:\n"
+            "        print('PPStructureV3 failed: ' + str(exc), file=sys.stderr)\n"
             "print('MOGAN_OCR_MARKDOWN_BEGIN')\n"
             "print('\\n\\n'.join(texts))")))
     (string-append "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True "
@@ -692,11 +738,10 @@
     (cond ((== provider "pix2text")
            (ocr-run-pix2text image-path formula?))
           ((== provider "paddleocr")
-           ;; PPStructureV3 is tuned for multi-block pages. A single CJK line
-           ;; with inline math is often misclassified (e.g. as a "chart") and
-           ;; yields no usable blocks; fall back to pix2text, which detects
-           ;; inline formulas and handles Chinese text. EasyOCR is English and
-           ;; text-only, so it is only a last resort.
+           ;; Prefer PaddleOCR-VL for structured screenshots and math-heavy
+           ;; documents. If the VL model or runtime is unavailable, the Python
+           ;; helper falls back to PPStructureV3; then we fall back to pix2text
+           ;; for single CJK lines with inline math.
            (let ((output (ocr-run-paddleocr image-path)))
              ;; Decide on the cleaned text: a degenerate result still carries
              ;; the MOGAN_OCR_MARKDOWN_BEGIN marker and log lines, so the raw
