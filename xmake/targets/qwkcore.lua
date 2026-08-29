@@ -38,7 +38,16 @@ target("QWKCore")
 
         local private_paths = {}
         local qt_package = get_config("qt")
-        local qt_version = get_config("qt_sdkver")
+        local qt_version = get_config("qt_sdkver") or QT6_VERSION
+        local qt_base = target:pkg("qt6base")
+        local qt_data
+        if qt_base and qt_base.data then
+            qt_data = qt_base:data("qt")
+        end
+        if qt_data then
+            qt_package = qt_data.sdkdir or qt_package
+            qt_version = qt_data.sdkver or qt_version
+        end
 
         local modules = {"QtCore", "QtGui"}
         for _, module in ipairs(modules) do
@@ -50,6 +59,10 @@ target("QWKCore")
                 table.insert(private_paths, path.join(headers_path, qt_version))
             else
                 headers_path= path.join(qt_package, "include")
+                if not os.isdir(path.join(headers_path, module))
+                    and os.isdir(path.join(headers_path, "qt6", module)) then
+                    headers_path = path.join(headers_path, "qt6")
+                end
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module, "private"))
                 table.insert(private_paths, path.join(headers_path, module, qt_version, module))
                 table.insert(private_paths, path.join(headers_path, module, qt_version))

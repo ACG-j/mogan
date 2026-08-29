@@ -149,7 +149,10 @@ target("stem") do
             add_rules("qt.widgetapp")
         end
         add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtNetwork", "QtNetworkAuth")
-        add_frameworks("QtQml", "QtQuick", "QtBodymovin")
+        add_frameworks("QtQml", "QtQuick")
+        if not (is_plat("linux") and linuxos.name() == "archlinux") then
+            add_frameworks("QtBodymovin")
+        end
     end
 
     add_packages("mupdf")

@@ -1,5 +1,5 @@
 package("qt6base")
-    set_kind("phony")
+    set_kind("template")
     set_base("qtbase")
 
     -- Sync with qt6lib and qt-tools

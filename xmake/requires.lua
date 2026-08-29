@@ -60,8 +60,19 @@ end
 add_requires("argh v1.3.2")
 
 if has_config("qt_frontend") then
-    QT6_VERSION="6.8.3"
-    add_requires("qt6widgets "..QT6_VERSION)
+    if is_plat("linux") and linuxos.name() == "archlinux" then
+        -- Do not pin the rolling system package to the repository's SDK
+        -- version. Propagate system lookup through widgets -> gui/core -> base
+        -- without forcing Qt's third-party build tools (gperf, meson, ...) to
+        -- be system packages as well.
+        add_requires("qt6widgets", {system = true})
+        add_requireconfs("**.qt6core", {system = true, override = true})
+        add_requireconfs("**.qt6gui", {system = true, override = true})
+        add_requireconfs("**.qt6base", {system = true, override = true})
+    else
+        QT6_VERSION = "6.8.3"
+        add_requires("qt6widgets "..QT6_VERSION)
+    end
 elseif not is_plat("wasm") then -- WASM GLFW is in EMCC
     add_requires("glfw")
 end

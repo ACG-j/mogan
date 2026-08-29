@@ -70,6 +70,7 @@ package("qtbase")
 
     on_fetch(function (package, opt)
         import("core.base.semver")
+        import("lib.detect.find_tool")
         import("detect.sdks.find_qt")
 
         local qt = package:data("qt")
@@ -87,6 +88,15 @@ package("qtbase")
         local find_opt = {force = opt.force}
         if package:config("exact_version") and version then
             find_opt.version = version:shortstr()
+        end
+        -- Arch Linux commonly has both Qt5's qmake and Qt6's qmake6. The
+        -- generic detector prefers qmake, so explicitly select qmake6 for
+        -- system Qt and let it report the rolling installed version.
+        if opt.system and package:is_plat("linux") and package:is_arch("x86_64", "aarch64", "arm64") then
+            local qmake6 = find_tool("qmake", {program = "qmake6", cachekey = "qmake6"})
+            if qmake6 then
+                find_opt.version = os.iorunv(qmake6.program, {"-query", "QT_VERSION"}):trim()
+            end
         end
         if not package:is_cross() then
             qt = find_qt(sdkdir, find_opt)
@@ -117,7 +127,11 @@ package("qtbase")
                 return
             end
         end
-        qt.version = qt.sdkver
+        -- Keep the package's selected recipe version for dependency
+        -- resolution. System Qt on rolling distributions may be newer than
+        -- the latest recipe version, while the actual SDK version remains in
+        -- `sdkver` for include/tool paths.
+        qt.version = (opt.system and version and version:shortstr()) or qt.sdkver
         package:data_set("qt", qt)
         return qt
     end)

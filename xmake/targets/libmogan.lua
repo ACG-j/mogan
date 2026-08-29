@@ -48,7 +48,10 @@ target("libmogan") do
         add_rules("qt.static")
         --add_packages("qt6base", "qt6core", "qt6gui", "qt6widgets")
         add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtNetwork", "QtNetworkAuth")
-        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets", "QtBodymovin")
+        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets")
+        if not (is_plat("linux") and linuxos.name() == "archlinux") then
+            add_frameworks("QtBodymovin")
+        end
     elseif has_config("cli_frontend") then
         set_kind("static")
     else

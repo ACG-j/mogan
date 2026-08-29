@@ -25,7 +25,10 @@ function add_target_cpp_test(filepath, dep1, dep2)
         end
         add_rules("qt.console")
         add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest", "QtNetwork")
-        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets", "QtBodymovin")
+        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets")
+        if not (is_plat("linux") and linuxos.name() == "archlinux") then
+            add_frameworks("QtBodymovin")
+        end
         if not is_plat("windows") then
             add_syslinks("pthread")
         end
@@ -79,7 +82,10 @@ function add_target_cpp_bench(filepath, dep)
         end
         add_rules("qt.console")
         add_frameworks("QtGui", "QtWidgets", "QtCore", "QtPrintSupport", "QtSvg", "QtTest", "QtNetwork")
-        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets", "QtBodymovin")
+        add_frameworks("QtQml", "QtQuick", "QtQuickWidgets")
+        if not (is_plat("linux") and linuxos.name() == "archlinux") then
+            add_frameworks("QtBodymovin")
+        end
         if not is_plat("windows") then
             add_syslinks("pthread")
         end
