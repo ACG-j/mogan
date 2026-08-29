@@ -55,7 +55,20 @@ notify_graphics_extents (tree t, point lbot, point rtop) {
       array<object> args;
       args << object (id) << object (lbot[0]) << object (lbot[1])
            << object (rtop[0]) << object (rtop[1]);
+      // graphics-notify-extents 是发给编辑器的 UI
+      // 通知（图形边界），对渲染输出无影响。 其定义在
+      // scripts-edit.scm，经菜单链 lazy-load；无 UI 的 CLI 前端不加载它，
+      // 故用条件编译在 CLI 下排除该回调（Qt/ImGui 照常）。
+#ifndef MOGAN_CLI
+      // 文档打开时菜单链尚未触发 lazy-load，先主动加载模块，
+      // 避免 graphics-notify-extents 未绑定（Issue #2091）
+      static bool scripts_edit_loaded= false;
+      if (!scripts_edit_loaded) {
+        eval ("(use-modules (dynamic scripts-edit))");
+        scripts_edit_loaded= true;
+      }
       call ("graphics-notify-extents", args);
+#endif
     }
   }
   else if (is_func (t, GRAPHICS) || is_func (t, GR_GROUP)) {
@@ -487,17 +500,81 @@ concater_rep::typeset_ellipse (tree t, path ip, bool close) {
   for (i= 0; i < n; i++)
     cip[i]= descend (ip, i);
   if (N (a) == 0 || N (a[0]) == 0) typeset_error (t, ip);
+  else if (n != 3) {
+    typeset_line (t, ip, close, true);
+  }
   else {
-    if (n != 3 || linearly_dependent (a[0], a[1], a[2])) {
+    double focal_length  = norm (a[1] - a[0]);
+    double sum_of_two_dis= norm (a[2] - a[0]) + norm (a[2] - a[1]);
+    // 椭圆要求 a > c；共线且 c >= a（即第三点在焦点之间）时退化为线段
+    if (linearly_dependent (a[0], a[1], a[2]) &&
+        focal_length >= sum_of_two_dis) {
       // cout << "typeset_ellipse: linearly dependent points "<< "\n";
       typeset_line (t, ip, close, true);
     }
     else {
-      double focal_length, sum_of_two_dis;
-      point  f1= a[0], f2= a[1], o3= a[2];
-      focal_length  = norm (f2 - f1);
-      sum_of_two_dis= norm (o3 - f1) + norm (o3 - f2);
-      curve c       = env->fr (ellipse (a, cip, close));
+      curve c= env->fr (ellipse (a, cip, close));
+      adjust_extremities (c, env->white_zones);
+      print (curve_box (ip, c, env->line_portion, env->pen, env->dash_style,
+                        env->dash_motif, env->dash_style_unit, env->fill_brush,
+                        typeset_line_arrows (ip)));
+    }
+  }
+  END_MAGNIFY
+}
+
+void
+concater_rep::typeset_hyperbola (tree t, path ip, bool close) {
+  BEGIN_MAGNIFY
+  int          i, n= N (t);
+  array<point> a (n);
+  for (i= 0; i < n; i++)
+    a[i]= env->as_point (env->exec (t[i]));
+  array<path> cip (n);
+  for (i= 0; i < n; i++)
+    cip[i]= descend (ip, i);
+  if (N (a) == 0 || N (a[0]) == 0) typeset_error (t, ip);
+  else if (n != 3) {
+    typeset_line (t, ip, close, true);
+  }
+  else {
+    double focal_length   = norm (a[1] - a[0]);
+    double diff_of_two_dis= abs (norm (a[2] - a[0]) - norm (a[2] - a[1]));
+    // 双曲线要求 a < c；共线且 c <= a（即第三点在焦点连线延长线上）时退化
+    if (linearly_dependent (a[0], a[1], a[2]) &&
+        focal_length <= diff_of_two_dis) {
+      // cout << "typeset_hyperbola: linearly dependent points "<< "\n";
+      typeset_line (t, ip, close, true);
+    }
+    else {
+      curve c= env->fr (hyperbola (a, cip, close));
+      adjust_extremities (c, env->white_zones);
+      print (curve_box (ip, c, env->line_portion, env->pen, env->dash_style,
+                        env->dash_motif, env->dash_style_unit, env->fill_brush,
+                        typeset_line_arrows (ip)));
+    }
+  }
+  END_MAGNIFY
+}
+
+void
+concater_rep::typeset_parabola (tree t, path ip, bool close) {
+  BEGIN_MAGNIFY
+  int          i, n= N (t);
+  array<point> a (n);
+  for (i= 0; i < n; i++)
+    a[i]= env->as_point (env->exec (t[i]));
+  array<path> cip (n);
+  for (i= 0; i < n; i++)
+    cip[i]= descend (ip, i);
+  if (N (a) == 0 || N (a[0]) == 0) typeset_error (t, ip);
+  else {
+    if (n != 3 || linearly_dependent (a[0], a[1], a[2])) {
+      // cout << "typeset_parabola: linearly dependent points "<< "\n";
+      typeset_line (t, ip, close, true);
+    }
+    else {
+      curve c= env->fr (parabola (a, cip, close));
       adjust_extremities (c, env->white_zones);
       print (curve_box (ip, c, env->line_portion, env->pen, env->dash_style,
                         env->dash_motif, env->dash_style_unit, env->fill_brush,

@@ -13,14 +13,71 @@
 #define EDIT_MODIFY_H
 #include "archiver.hpp"
 #include "editor.hpp"
+#ifdef LORO_ENABLED
+#include "loro_shadow.hpp"
+#endif
 
 path inner_paragraph (tree t, path p);
+
+class edit_modify_rep;
+
+#ifdef LORO_ENABLED
+struct stable_cursor_snapshot {
+  edit_modify_rep* ed;
+  path             rp;
+  observer         cur_save;
+  bool             had_sel;
+  observer         sel_start_save;
+  observer         sel_end_save;
+
+  string cur_payload;
+  string sel_start_payload;
+  string sel_end_payload;
+
+  stable_cursor_snapshot (edit_modify_rep* ed, path tp, path rp, tree buf,
+                          loro_shadow* loro_doc);
+  void restore (tree buf, loro_shadow* loro_doc);
+};
+#endif
 
 class edit_modify_rep : virtual public editor_rep {
 protected:
   observer cur_pos; // tree_position corresponding to tp
   double   author;  // the author identifier associated to this view
   archiver arch;    // archiver attached to the editor
+#ifdef LORO_ENABLED
+  loro_shadow loro_doc;
+  bool        loro_seeded         = false; // 是否已 seed 当前 buffer
+  bool        loro_applying_remote= false; // 远端应用期间，跳过镜像回灌
+  bool        loro_routing        = false; // debug_loro round-trip 中，防递归
+  bool        loro_collab_on= false; // 协作会话开启前，本地编辑不 seed/不上行
+  bool        loro_vv_initialized=
+      false; // 首次 import 远端数据后推进 export vv，避免回传
+  // 远程 peer 光标列表：peer 数量少，线性查找/更新即可；重绘时遍历它，经
+  // cursor_path_of 把 TreeID+偏移解析回当前 buffer path。偏移以 off_field
+  // 字符串存
+  // （"T<hex>"=Loro 稳定位置，重绘时按当前 doc 解析；"I<int>"=结构/整数偏移），
+  // 延迟解析以保证并发编辑下的 CRDT 级稳定。
+  struct remote_cursor_entry {
+    string        peer;
+    mogan_tree_id c_tid;
+    string        c_off;
+    mogan_tree_id s_tid;
+    string        s_off;
+    mogan_tree_id e_tid;
+    string        e_off;
+  };
+  array<remote_cursor_entry> remote_cursors;
+  array<string>              queued_remote_mods;
+  stable_cursor_snapshot*    current_cursor_snapshot= nullptr;
+  // 本地光标 payload 路径预检缓存（微秒级 O(depth) path
+  // 预检，避免误触发全量重度计算）
+  path   last_cp;
+  path   last_sp;
+  path   last_ep;
+  bool   last_sel_active= false;
+  string cached_payload;
+#endif
 
 public:
   edit_modify_rep ();
@@ -37,6 +94,23 @@ public:
   void notify_remove_node (path p);
   void notify_set_cursor (path p, tree data);
   void post_notify (path p);
+#ifdef LORO_ENABLED
+  void ensure_loro_seeded () override;
+  void mirror_loro (const modification& mod) override;
+  void apply_remote (string bytes) override;
+  void set_remote_cursor (string peer, string payload) override;
+  void reset_cursor_payload_cache ();
+  array<remote_cursor_view> get_remote_cursors () override;
+  string                    collab_cursor_payload () override;
+  void                      collab_cursor_moved_hook () override;
+  void                      collab_snapshot_cursor () override;
+  void                      collab_restore_cursor (bool apply= true) override;
+  void                      queue_remote (string raw_mod) override;
+  void                      apply_queued_remote () override;
+  bool                      collab_applying_remote () override;
+#endif
+  void collab_enable () override;
+  bool collab_enabled () override;
 
   void clear_undo_history ();
   void archive_state ();

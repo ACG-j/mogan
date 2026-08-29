@@ -15,6 +15,8 @@
   (:use (kernel texmacs tm-define) (kernel texmacs tm-modes))
 ) ;texmacs-module
 
+(import (liii vector))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lazy exports from other modules
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -63,7 +65,7 @@
 ) ;define-public
 
 (define-public (local-connection-variants name)
-  (lazy-plugin-force)
+  (lazy-plugin-force-one name)
   (or (ahash-ref connection-varlist name) (list))
 ) ;define-public
 
@@ -72,7 +74,7 @@
 ) ;define-public
 
 (define-public (connection-defined? name)
-  (lazy-plugin-force)
+  (lazy-plugin-force-one name)
   (or (ahash-ref connection-defined name) (remote-connection-defined? name))
 ) ;define-public
 
@@ -87,7 +89,7 @@
 ) ;define-public
 
 (define-public (connection-info name session)
-  (lazy-plugin-force)
+  (lazy-plugin-force-one name)
   (with pos
     (string-index session #\:)
     (if pos
@@ -108,7 +110,7 @@
 ) ;define
 
 (define-public (connection-get-handlers name)
-  (lazy-plugin-force)
+  (lazy-plugin-force-one name)
   (with r (ahash-ref connection-handler name) (if r (cons 'tuple r) '(tuple)))
 ) ;define-public
 
@@ -383,6 +385,44 @@
 ) ;define
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Plugin list
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (plugin-read-dir path)
+  ;; listdir 对不存在的目录抛错（如 TEXMACS_HOME_PATH/plugins 缺失），先判存在性
+  (let ((u (string->url path)))
+    (if (url-exists? u) (listdir (url->system u)) #())
+  ) ;let
+) ;define
+
+(define-public (plugin-list)
+  ;; 返回已安装插件名（symbol）列表：读两个 plugins 目录 -> 合并排序 ->
+  ;; 滤 "." ".." -> 去连续重复。listdir 返回 vector，直接 sort! 不转 list
+  (let* ((v (vector-append (plugin-read-dir "$TEXMACS_PATH/plugins")
+              (plugin-read-dir "$TEXMACS_HOME_PATH/plugins")
+            ) ;vector-append
+         ) ;v
+         (sorted (sort! v string<?))
+         (entries (vector-filter (lambda (s) (not (member s '("." "..")))) sorted))
+         (n (vector-length entries))
+        ) ;
+    (let loop
+      ((i 0) (prev #f) (acc '()))
+      ;; acc 是本函数新建的临时列表，可用破坏性 reverse!
+      (if (= i n)
+        (reverse! acc)
+        (let ((s (vector-ref entries i)))
+          (if (and prev (== s prev))
+            (loop (+ i 1) prev acc)
+            (loop (+ i 1) s (cons (string->symbol s) acc))
+          ) ;if
+        ) ;let
+      ) ;if
+    ) ;let
+  ) ;let*
+) ;define-public
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Cache plugin reinit
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -535,7 +575,7 @@
 ) ;define
 
 (define-public (plugin-add-windows-path rad rel after?)
-  (when (or (os-win32?) (os-mingw?))
+  (when (os-windows?)
     (add-windows-program-path (url-append rad rel) after?)
   ) ;when
 ) ;define-public
@@ -605,7 +645,7 @@
          (connection-insert-handler name (second cmd) (symbol->string (third cmd)))
         ) ;
         ((func? cmd :winpath 2)
-         (when (or (os-win32?) (os-mingw?))
+         (when (os-windows?)
            (add-windows-program-path (url-append (second cmd) (third cmd)) #t)
          ) ;when
         ) ;
@@ -691,12 +731,9 @@
       (if (url-exists? u)
         (with fname
           (url-materialize u "r")
-          ;; (display* "loading plugin " name* "\n")
-          ;; (display* "loading plugin " fname "\n")
-          ;; (with start (texmacs-time)
-          ;;  (load fname)
-          ;;  (display* name " -> " (- (texmacs-time) start) " ms\n"))
+          (debug-message "plugin" (string-append "(" name "): loading plugin ...\n"))
           (load fname)
+          (debug-message "plugin" (string-append "(" name "): plugin loaded\n"))
         ) ;with
       ) ;if
       (if (plugin-all-initialized?) (plugin-save-setup))
@@ -707,10 +744,27 @@
 (define-public (lazy-plugin-initialize name)
   "Initialize the plug-in @name in a lazy way"
   (ahash-set! plugin-initialize-todo name #t)
-  (if (eval (ahash-ref plugin-data-table (list name :prioritary)))
+  ;; telemetry 与文档无关，直接初始化，不走 idle 延迟
+  (if (== name 'telemetry)
     (plugin-initialize name)
-    (delayed (:idle 1000) (plugin-initialize name))
+    (delayed (:idle 10) (plugin-initialize name))
   ) ;if
+) ;define-public
+
+(define-public (lazy-plugin-force-one name)
+  "Force the lazy initialization of the single plugin @name"
+  ;; plugin-feed 链路（connection-defined?/connection-info 等）只需目标插件
+  ;; 就绪，不应像 lazy-plugin-force 那样强载全部待初始化插件
+  (with name*
+    (if (symbol? name) name (string->symbol name))
+    (when (ahash-ref plugin-initialize-todo name*)
+      (debug-message "debug-std"
+        (string-append "lazy-plugin-force-one: forcing " (symbol->string name*) "\n")
+      ) ;debug-message
+      (plugin-initialize name*)
+    ) ;when
+  ) ;with
+  #t
 ) ;define-public
 
 (define-public (lazy-plugin-force)
@@ -719,6 +773,12 @@
     #f
     (with l
       (ahash-table->list plugin-initialize-todo)
+      (debug-message "debug-std"
+        (string-append "lazy-plugin-force: forcing "
+          (number->string (length l))
+          " pending plugins\n"
+        ) ;string-append
+      ) ;debug-message
       (for-each plugin-initialize (map car l))
       (set! plugin-initialize-done? #t)
       #t

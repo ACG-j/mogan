@@ -21,6 +21,7 @@
 #include "tm_data.hpp"
 #include "tm_file.hpp"
 #include "tm_link.hpp"
+#include "tm_sys_utils.hpp"
 #include "tmfs_url.hpp"
 #include "tree_observer.hpp"
 #include "web_files.hpp"
@@ -209,15 +210,11 @@ make_welcome_buffer () {
 
 url
 make_new_buffer () {
-  int i= 1;
-  while (true) {
-    url name= url_scratch ("no_name_", ".tmu", i);
-    if (is_nil (concrete_buffer (name))) {
-      set_buffer_tree (name, tree (DOCUMENT));
-      return name;
-    }
-    else i++;
-  }
+  // 新建标签页时 tm-files 必已加载,scratch-buffer-name 保证返回唯一名
+  string s   = as_string (call ("scratch-buffer-name"));
+  url    name= url_system (s);
+  set_buffer_tree (name, tree (DOCUMENT));
+  return name;
 }
 
 bool
@@ -232,19 +229,27 @@ buffer_has_name (url name) {
 string
 propose_title (string old_title, url u, tree doc) {
   string name= as_string (tail (u));
-  if (starts (name, "no_name_") && ends (name, ".tmu")) {
-    string no_name= translate ("No name");
-    for (int i= 0; i < N (no_name); i++)
-      if (((unsigned char) (no_name[i])) >= (unsigned char) 128) {
-        no_name= "No name";
-        break;
-      }
-    name= no_name * " [" * name (8, N (name) - 4) * "]";
+  if (starts (name, "draft_") && ends (name, ".tmu")) {
+    // 标题规则(Draft Monday / 草稿（周一21:27）等)由 scheme 侧实现
+    try {
+      name= as_string (call ("scratch-buffer-title", object (u)));
+    } catch (...) {
+      name= translate ("Draft");
+    }
   }
   if ((name == "") || (name == ".")) name= as_string (tail (u * url_parent ()));
   if ((name == "") || (name == ".")) name= as_string (u);
-  if (is_rooted_tmfs (u))
-    name= as_string (call ("tmfs-title", as_string (u), object (doc)));
+  if (is_rooted_tmfs (u)) {
+    // tmfs buffer 的标题由业务层显式设定后（如协作 become_ready 设 doc_name）应
+    // 保留，避免 tmfs-title 默认返回完整 URL（tmfs://collab/<doc_id>）覆盖。
+    // 仅当 old_title 为空 / 默认 (No name) / 已是 tmfs URL 时才重算
+    // tmfs-title。
+    bool keep_old= (N (old_title) > 0) && !starts (old_title, "tmfs://") &&
+                   !starts (old_title, "No name");
+    name= keep_old
+              ? old_title
+              : as_string (call ("tmfs-title", as_string (u), object (doc)));
+  }
 
   int i, j;
   for (j= 1; true; j++) {
@@ -460,7 +465,7 @@ attach_buffer_notifier (url name) {
 
 tree
 attach_subformat (tree t, url u, string fm) {
-  if ((fm == "texmacs") || (fm == "stm")) return t;
+  if ((fm == "texmacs") || (fm == "stm") || (fm == "stem")) return t;
   if (!format_exists (fm)) return t;
 
   string s          = suffix (u);
@@ -536,12 +541,22 @@ load_style_tree (string package) {
   if (style_tree_cache->contains (package)) return style_tree_cache[package];
   url name= url_none ();
   url styp= "$TEXMACS_STYLE_PATH";
-  if (ends (package, ".ts")) name= package;
-  else name= styp * (package * ".ts");
+  if (ends (package, ".ts") || ends (package, ".stem")) name= package;
+  else {
+    url stem_name= styp * (package * ".stem");
+    name         = resolve (stem_name);
+    if (is_none (name)) name= styp * (package * ".ts");
+  }
   name= resolve (name);
   string doc_s;
   if (!load_string (name, doc_s, false)) {
-    tree doc= texmacs_document_to_tree (doc_s);
+    tree doc;
+    if (ends (as_string (name), ".stem")) {
+      doc= generic_to_tree (doc_s, "stem-document");
+    }
+    else {
+      doc= texmacs_document_to_tree (doc_s);
+    }
     if (is_compound (doc)) doc= extract (doc, "body");
     style_tree_cache (package)= doc;
     return doc;
@@ -633,6 +648,26 @@ buffer_export (url name, url dest, string fm) {
   if (N (links) != 0) doc << compound ("links", links);
 
   return export_tree (doc, dest, fm);
+}
+
+bool
+buffer_render_to_images (url name, url dest, double zoomf) {
+  // 用 passive（无窗口）view 将 buffer 各页渲染为 PNG，headless 可用。
+  tm_view vw= concrete_view (get_passive_view (name));
+  ASSERT (vw != NULL, "view expected");
+  vw->ed->render_to_images (dest, zoomf);
+  return true;
+}
+
+bool
+buffer_render_to_pdf (url name, url dest) {
+  // 用 passive（无窗口）view 将 buffer 导出为 PDF，headless 可用。
+  // 直接走 print_doc 而非 print_to_file，避免无窗 editor 下 set_message
+  // 经 get_current_editor 取空指针而崩溃。
+  tm_view vw= concrete_view (get_passive_view (name));
+  ASSERT (vw != NULL, "view expected");
+  vw->ed->print_doc (dest, false, 1, 1000000);
+  return true;
 }
 
 tree

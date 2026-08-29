@@ -17,12 +17,14 @@
 #include "file.hpp"
 #include "iterator.hpp"
 #include "merge_sort.hpp"
+#include "new_document.hpp"
 #include "new_style.hpp"
 #include "observers.hpp"
 #include "tm_buffer.hpp"
 #include "tm_timer.hpp"
 #include "tree_modify.hpp"
 #include "tree_observer.hpp"
+#include "typesetter.hpp"
 #include <climits>
 
 using namespace moebius;
@@ -114,6 +116,9 @@ edit_typeset_rep::get_att () {
 void
 edit_typeset_rep::set_fin (hashmap<string, tree> H) {
   fin= H;
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("final");
+#endif
 }
 void
 edit_typeset_rep::set_ref (hashmap<string, tree> H) {
@@ -126,6 +131,9 @@ edit_typeset_rep::set_aux (hashmap<string, tree> H) {
 void
 edit_typeset_rep::set_att (hashmap<string, tree> H) {
   buf->data->att= H;
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("attachments");
+#endif
 }
 
 tree
@@ -215,11 +223,17 @@ edit_typeset_rep::get_att (string key) {
 void
 edit_typeset_rep::set_att (string key, tree im) {
   buf->data->att (key)= im;
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("attachments");
+#endif
 }
 
 void
 edit_typeset_rep::reset_att (string key) {
   buf->data->att->reset (key);
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("attachments");
+#endif
 }
 
 array<string>
@@ -245,6 +259,9 @@ edit_typeset_rep::add_init (hashmap<string, tree> H) {
   init->join (H);
   ::notify_assign (ttt, path (), subtree (et, rp));
   notify_change (THE_ENVIRONMENT);
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("initial");
+#endif
 }
 
 void
@@ -602,6 +619,37 @@ edit_typeset_rep::get_env_string (string var) {
   return as_string (get_env_value (var));
 }
 
+static font
+find_leaf_font (box b) {
+  if (is_nil (b)) return font ();
+  if (b->get_type () == TEXT_BOX) return b->get_leaf_font ();
+  int n= N (b);
+  for (int i= 0; i < n; i++) {
+    font f= find_leaf_font (b[i]);
+    if (!is_nil (f)) return f;
+  }
+  return font ();
+}
+
+string
+edit_typeset_rep::physical_font_for_string (string s) {
+  // 复用 print_snippet 的临时文档排版路径，量真实排版结果：
+  // 叶子物理字体的 res_name；字符无字体覆盖时为 "error-" 前缀
+  path temp_root= new_document ();
+  temp_root << 0;
+  assign (subtree (et, temp_root), tree (s));
+  typeset_prepare ();
+  env->style_init_env ();
+  env->update ();
+  box b= typeset_as_box (env, tree (s), reverse (temp_root));
+  delete_document (path_up (temp_root));
+  font fn= find_leaf_font (b);
+  if (is_nil (fn)) return "";
+  // 文本盒挂的是 smart font，需按字符下钻到实际物理子字体
+  font sub= fn->get_subfont (s);
+  return is_nil (sub) ? string ("") : sub->res_name;
+}
+
 string
 edit_typeset_rep::get_init_string (string var) {
   return as_string (get_init_value (var));
@@ -652,6 +700,21 @@ edit_typeset_rep::get_page_count () {
   box pages= eb[0];
   if (is_nil (pages)) return 0;
   return N (pages);
+}
+
+string
+edit_typeset_rep::get_page_number_text (int page_index) {
+  if (is_nil (eb) || N (eb) == 0) return ""; // eb: move_box，整体平移盒子
+  box pg= eb[0]; // eb[0]: scatter_box，页面容器，子盒子对应第 i 页边框层
+  if (is_nil (pg) || page_index < 0 || page_index >= N (pg)) return "";
+  box pb= pg[page_index]; // eb[0][i]: page_border_box，边框盒子，第 i 页边框层
+  if (is_nil (pb) || N (pb) == 0) return "";
+  tree page_box= pb[0]; // eb[0][i][0]: page_box，页面盒子，包含页面信息
+  if (!is_compound (page_box) || N (page_box) < 1 || !is_atomic (page_box[0]))
+    return "";
+  string label= page_box[0]->label; // label: 格式为 "page-<页码>"
+  if (!starts (label, "page-")) return "";
+  return label (5, N (label));
 }
 
 int
@@ -962,6 +1025,9 @@ edit_typeset_rep::change_style (tree t) {
   if (changed) {
     require_save ();
     notify_change (THE_ENVIRONMENT);
+#ifdef LORO_ENABLED
+    mirror_meta_if_active ("style");
+#endif
   }
 }
 
@@ -977,6 +1043,9 @@ edit_typeset_rep::init_style (string name) {
   else the_style= tree (TUPLE, name) * the_style (1, N (the_style));
   require_save ();
   notify_change (THE_ENVIRONMENT);
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("style");
+#endif
 }
 
 tree
@@ -993,6 +1062,10 @@ edit_typeset_rep::init_env (string var, tree by) {
       var != ZOOM_FACTOR)
     require_save ();
   notify_change (THE_ENVIRONMENT);
+  notify_change (THE_MENUS);
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("initial");
+#endif
 }
 
 void
@@ -1002,6 +1075,10 @@ edit_typeset_rep::init_default (string var) {
   if (stydef->contains (var)) pre (var)= stydef[var];
   else pre->reset (var);
   notify_change (THE_ENVIRONMENT);
+  notify_change (THE_MENUS);
+#ifdef LORO_ENABLED
+  mirror_meta_if_active ("initial");
+#endif
 }
 
 /******************************************************************************

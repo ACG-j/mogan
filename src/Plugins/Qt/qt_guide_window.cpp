@@ -106,7 +106,7 @@ StartupLoginDialog::setupUi () {
 
   // 创建图标标签
   iconLabel= new QLabel (this);
-  iconLabel->setPixmap (QIcon (":/app/stem.png").pixmap (128, 128));
+  iconLabel->setPixmap (QIcon (":/app/stem.png").pixmap (192, 192));
   iconLabel->setAlignment (Qt::AlignCenter);
   iconLabel->setObjectName ("iconLabel");
 
@@ -125,8 +125,8 @@ StartupLoginDialog::setupUi () {
 
   // 创建功能特性标签
   featureLabel1= new QLabel (
-      "1. " + qt_translate ("Register now and receive a 7-day membership."),
-      this); // Register now and receive a 7-day membership.
+      "1. " + qt_translate ("Register now and receive a 3-day membership."),
+      this); // Register now and receive a 3-day membership.
   featureLabel2= new QLabel (
       "2. " + qt_translate ("Log in to sync settings and access all features"),
       this); // Log in to sync settings and access all features
@@ -156,7 +156,7 @@ StartupLoginDialog::setupUi () {
   }
 
   skipButton=
-      new QPushButton (qt_translate ("退出软件"), this); // 退出软件 Quit App
+      new QPushButton (qt_translate ("跳过登录"), this); // 跳过登录 Skip Login
   skipButton->setObjectName ("skipButton");
 
   // 创建布局
@@ -170,10 +170,14 @@ StartupLoginDialog::setupUi () {
   buttonLayout= new QHBoxLayout ();
   buttonLayout->addStretch ();
   buttonLayout->addWidget (loginButton);
-  buttonLayout->addWidget (skipButton);
   buttonLayout->addStretch ();
 
   mainLayout= new QVBoxLayout (this);
+  // 右上角跳过登录按钮
+  QHBoxLayout* topLayout= new QHBoxLayout ();
+  topLayout->addStretch ();
+  topLayout->addWidget (skipButton);
+  mainLayout->addLayout (topLayout);
   mainLayout->addWidget (titleLabel);
   mainLayout->addSpacing (10);
   mainLayout->addWidget (subtitleLabel);
@@ -300,15 +304,16 @@ StartupLoginDialog::styleSheet () const {
             background-color: transparent;
             color: #a0a0a0;
             border: none;
+            font-size: 12px;
             font-weight: 500;
+            padding: 4px 10px;
+            min-width: 0;
         }
         QPushButton#skipButton:hover {
-            background-color: rgba(255, 255, 255, 0.05);
             color: #ffffff;
-            border-color: #666666;
         }
         QPushButton#skipButton:pressed {
-            background-color: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
         }
         QProgressBar {
             border: 1px solid #444444;
@@ -360,7 +365,7 @@ StartupLoginDialog::StartupLoginDialog (QWidget* parent)
   setWindowIcon (QIcon (":/app/stem.png"));
 
   // 固定窗口大小
-  setFixedSize (500, 550);
+  setFixedSize (640, 680);
   setWindowTitle (QObject::tr (" "));
 
   // 设置样式表
@@ -580,17 +585,21 @@ StartupLoginDialog::handleLoginButtonClick () {
 
 void
 StartupLoginDialog::handleSkipButtonClick () {
+  // 跳过登录：以未登录状态进入软件
   result        = StartupLoginDialog::SkipClicked;
   userChoiceMade= true;
-  emit skipRequested ();
+
+  if (autoBackupCheckBox) {
+    setAutoBackup (autoBackupCheckBox->isChecked ());
+  }
 
   if (asyncStartupMode) {
-    requestAsyncStartupQuit ();
+    clearMainWindowOverlay ();
     close ();
     return;
   }
 
-  reject ();
+  accept ();
 }
 
 void
@@ -642,7 +651,7 @@ StartupLoginDialog::handleInitializationComplete (bool success) {
                         qt_translate ("将以离线模式启动，会员功能暂不可用"));
     }
     else {
-      updateProgressUI (100, qt_translate ("初始化完成，注册即送7天会员！"),
+      updateProgressUI (100, qt_translate ("初始化完成，注册即送3天会员！"),
                         qt_translate ("准备就绪"));
     }
 

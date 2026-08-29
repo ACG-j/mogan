@@ -39,13 +39,8 @@
 
 (define-library (srfi srfi-78)
   (import (scheme base))
-  (export check
-    check-set-mode!
-    check-report
-    check-reset!
-    check-passed?
-    check-failed?
-    check:proc
+  (export check check-set-mode! check-report check-reset! check-passed?
+    check-failed? check:proc
   ) ;export
   (begin
 
@@ -79,21 +74,11 @@
       (set! check:correct (+ check:correct 1))
     ) ;define
 
-    (define (check:add-failed! expression
-              actual-result
-              expected-result
-              file
-              line
-              call-stack
+    (define (check:add-failed! expression actual-result expected-result file
+              line call-stack
             ) ;check:add-failed!
       (set! check:failed
-        (cons (list expression
-                actual-result
-                expected-result
-                file
-                line
-                call-stack
-              ) ;list
+        (cons (list expression actual-result expected-result file line call-stack)
           check:failed
         ) ;cons
       ) ;set!
@@ -101,18 +86,14 @@
 
     (define (check:get-source-location expr)
       (if (pair? expr)
-        (list (or (pair-filename expr) "unknown")
-          (or (pair-line-number expr) 0)
-        ) ;list
+        (list (or (pair-filename expr) "unknown") (or (pair-line-number expr) 0))
         (list "unknown" 0)
       ) ;if
     ) ;define
 
     (define (check:get-stacktrace-safely)
       (let ((stack (stacktrace)))
-        (if (and (string? stack)
-              (> (string-length stack) 0)
-            ) ;and
+        (if (and (string? stack) (> (string-length stack) 0))
           stack
           "[no stacktrace available]"
         ) ;if
@@ -123,12 +104,13 @@
       (newline)
       (check:write expression)
       (display " => ")
+      (flush-output-port)
     ) ;define
 
-    (define (check:report-actual-result actual-result
-            ) ;check:report-actual-result
+    (define (check:report-actual-result actual-result)
       (check:write actual-result)
       (display " ; ")
+      (flush-output-port)
     ) ;define
 
     (define (check:report-correct cases)
@@ -151,12 +133,8 @@
       (newline)
     ) ;define
 
-    (define (report-location-and-stacktrace location-info
-              call-stack
-            ) ;report-location-and-stacktrace
-      (unless (and (string=? "unknown" (car location-info))
-                (zero? (cadr location-info))
-              ) ;and
+    (define (report-location-and-stacktrace location-info call-stack)
+      (unless (and (string=? "unknown" (car location-info)) (zero? (cadr location-info)))
         (display "; position: ")
         (display (car location-info))
         (display ":")
@@ -170,32 +148,22 @@
     ) ;define
 
     (define (check-passed? expected-total-count)
-      (and (= (length check:failed) 0)
-        (= check:correct expected-total-count)
-      ) ;and
+      (and (= (length check:failed) 0) (= check:correct expected-total-count))
     ) ;define
 
     (define (check-failed?)
       (>= (length check:failed) 1)
     ) ;define
 
-    (define* (check:proc expression
-               thunk
-               expected-result
-               (equal equal?)
-             ) ;check:proc
-      (let ((location-info (check:get-source-location expression)
-            ) ;location-info
-           ) ;
+    (define* (check:proc expression thunk expected-result (equal equal?))
+      (let ((location-info (check:get-source-location expression)))
         (case check:mode
          ((0) #f)
          ((1)
           (let ((actual-result (thunk)))
             (if (equal actual-result expected-result)
               (check:add-correct!)
-              (let ((call-stack (check:get-stacktrace-safely)
-                    ) ;call-stack
-                   ) ;
+              (let ((call-stack (check:get-stacktrace-safely)))
                 (check:add-failed! expression
                   actual-result
                   expected-result
@@ -211,17 +179,12 @@
           (let ((actual-result (thunk)))
             (if (equal actual-result expected-result)
               (check:add-correct!)
-              (let ((call-stack (check:get-stacktrace-safely)
-                    ) ;call-stack
-                   ) ;
+              (let ((call-stack (check:get-stacktrace-safely)))
                 (begin
                   (check:report-expression expression)
-                  (check:report-actual-result actual-result
-                  ) ;check:report-actual-result
+                  (check:report-actual-result actual-result)
                   (check:report-failed expected-result)
-                  (report-location-and-stacktrace location-info
-                    call-stack
-                  ) ;report-location-and-stacktrace
+                  (report-location-and-stacktrace location-info call-stack)
                   (check:add-failed! expression
                     actual-result
                     expected-result
@@ -237,21 +200,16 @@
          ((100)
           (check:report-expression expression)
           (let ((actual-result (thunk)))
-            (check:report-actual-result actual-result
-            ) ;check:report-actual-result
+            (check:report-actual-result actual-result)
             (if (equal actual-result expected-result)
               (begin
                 (check:report-correct 1)
                 (check:add-correct!)
               ) ;begin
-              (let ((call-stack (check:get-stacktrace-safely)
-                    ) ;call-stack
-                   ) ;
+              (let ((call-stack (check:get-stacktrace-safely)))
                 (begin
                   (check:report-failed expected-result)
-                  (report-location-and-stacktrace location-info
-                    call-stack
-                  ) ;report-location-and-stacktrace
+                  (report-location-and-stacktrace location-info call-stack)
                   (check:add-failed! expression
                     actual-result
                     expected-result
@@ -264,10 +222,7 @@
             ) ;if
           ) ;let
          ) ;
-         (else (error "unrecognized check:mode"
-                 check:mode
-               ) ;error
-         ) ;else
+         (else (error "unrecognized check:mode" check:mode))
         ) ;case
       ) ;let
     ) ;define*

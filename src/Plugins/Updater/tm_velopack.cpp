@@ -1,0 +1,392 @@
+/******************************************************************************
+ * MODULE     : tm_velopack.cpp
+ * DESCRIPTION: Manager class for the autoupdater Velopack framework
+ * COPYRIGHT  : (C) 2026 Mogan
+ *******************************************************************************
+ * This software falls under the GNU general public license version 3 or later.
+ * It comes WITHOUT ANY WARRANTY WHATSOEVER. For details, see the file LICENSE
+ * in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
+ ******************************************************************************/
+
+#include "tm_configure.hpp"
+
+#if defined(USE_PLUGIN_VELOPACK) && defined(OS_WIN)
+
+#include "preferences.hpp"
+#include "string.hpp"
+#include "tm_velopack.hpp"
+
+#include <Velopack.hpp>
+
+// Velopack 桥接层使用 C++ 标准库线程原语与容器，工作线程不触碰 lolly 类型
+// （与 src/Plugins/WebSocket/libcurl/tm_curl_websocket_client.* 同理）。
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <cstdlib>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+// 更新源 feed URL 的 base URL：按 stem-profile 首选项运行时选定
+// （default/production → 生产 liiistem.cn，staging → 测试 test.liiistem.cn）。
+// stem-profile 是运行期首选项（可被 set-preference 切换），故 feed URL 不能
+// 编译期固化；profile 或 update-channel 变化后由 ensure_mgr 按快照重建 mgr
+// 换源/换通道。两通道 packageId 一致：社区版切到商业版 feed 后，Velopack
+// 找不到匹配 baseVersion 的 delta 会自动回退 full 包，可直接跨通道升级。
+static std::string
+feed_base_url () {
+  string profile= get_user_preference ("stem-profile", "default");
+  if (profile == "staging") return "https://test.liiistem.cn";
+  return "https://liiistem.cn";
+}
+
+// 完整 feed URL = base URL + 按社区版/商业版（IS_COMMUNITY 宏）选定的路径段
+static std::string
+feed_url (const std::string& base) {
+#ifdef IS_COMMUNITY
+  return base + "/api/v1/public/update/win-x64";
+#else
+  return base + "/api/v1/public/commercial/update/win-x64";
+#endif
+}
+
+// 更新通道：读 update-channel 首选项（与 stem-profile 正交，profile 决定
+// base URL，channel 决定 feed 下的 releases.<channel>.json）。仅 "beta"
+// 视为 beta，其余（含缺省）归一为 "stable"，与首选项 UI 的 radio 语义一致。
+static std::string
+update_channel () {
+  string channel= get_user_preference ("update-channel", "stable");
+  if (channel == "beta") return "beta";
+  return "stable";
+}
+
+static std::string
+exception_message () {
+  try {
+    throw;
+  } catch (std::exception& e) {
+    return e.what ();
+  } catch (...) {
+    return "unknown error";
+  }
+}
+
+// 按 semver2 优先级比较两个版本串（忽略 build 元数据；核心段逐数字比较，预发布
+// 段按标识符比较，数字标识符小于字母标识符）。返回 a 是否严格高于 b。
+// 版本串来自 Velopack feed（如 "2026.3.1-rc.1"）。发布约定预发布段必须用
+// "rc.N" 数字标识符（"rcN" 按字典序会把 rc10 等判成旧版本，见 devel/0512.md）。
+static int
+compare_versions (const std::string& a, const std::string& b) {
+  auto split= [] (const std::string& s, char c) {
+    std::vector<std::string> parts;
+    std::string              cur;
+    for (char ch : s) {
+      if (ch == c) {
+        parts.push_back (cur);
+        cur.clear ();
+      }
+      else cur+= ch;
+    }
+    parts.push_back (cur);
+    return parts;
+  };
+  auto is_num= [] (const std::string& s) {
+    return !s.empty () && std::all_of (s.begin (), s.end (), [] (char ch) {
+      return ::isdigit ((unsigned char) ch);
+    });
+  };
+  // 剥离 build 元数据；a0/b0 即「核心段[-预发布段]」
+  auto   a0= a.substr (0, a.find ('+')), b0= b.substr (0, b.find ('+'));
+  auto   ac= split (a0.substr (0, a0.find ('-')), '.');
+  auto   bc= split (b0.substr (0, b0.find ('-')), '.');
+  size_t n = std::max (ac.size (), bc.size ());
+  for (size_t i= 0; i < n; i++) {
+    long an= i < ac.size () ? std::atol (ac[i].c_str ()) : 0;
+    long bn= i < bc.size () ? std::atol (bc[i].c_str ()) : 0;
+    if (an != bn) return an < bn ? -1 : 1;
+  }
+  // 核心段相等：无预发布段 > 有预发布段；预发布段按标识符逐个比较
+  bool aPre= a0.find ('-') != std::string::npos;
+  bool bPre= b0.find ('-') != std::string::npos;
+  if (aPre != bPre) return aPre ? -1 : 1;
+  if (!aPre) return 0;
+  auto ap= split (a0.substr (a0.find ('-') + 1), '.');
+  auto bp= split (b0.substr (b0.find ('-') + 1), '.');
+  n      = std::max (ap.size (), bp.size ());
+  for (size_t i= 0; i < n; i++) {
+    if (i >= ap.size ()) return -1; // a 缺少标识符，a < b
+    if (i >= bp.size ()) return 1;
+    bool aNum= is_num (ap[i]), bNum= is_num (bp[i]);
+    if (aNum && bNum) {
+      long an= std::atol (ap[i].c_str ()), bn= std::atol (bp[i].c_str ());
+      if (an != bn) return an < bn ? -1 : 1;
+    }
+    else if (aNum) return -1; // 数字标识符 < 字母标识符
+    else if (bNum) return 1;
+    else if (ap[i] != bp[i]) return ap[i] < bp[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+static bool
+newer_version (const std::string& a, const std::string& b) {
+  return compare_versions (a, b) > 0;
+}
+
+struct tm_velopack::tm_velopack_rep {
+  std::unique_ptr<Velopack::UpdateManager>
+              mgr;          // 惰性创建；stem-profile/channel 切换后重建
+  std::string mgr_base;     // mgr 创建时的 base URL（判断是否需重建）
+  std::string mgr_channel;  // mgr 创建时的通道（判断是否需重建）
+  std::string feed_base;    // 本次检查/下载启动时快照的 base URL（主线程写入）
+  std::string feed_channel; // 本次检查/下载启动时快照的通道（主线程写入）
+  std::optional<Velopack::UpdateInfo> info;            // 最近一次检查结果
+  std::string                         info_channel;    // info 的来源通道
+  std::thread                         worker;          // 当前检查/下载线程
+  std::mutex                          mtx;             // 保护以下字段
+  tm_updater_state                    st;              // = UPDATER_IDLE
+  tm_updater_state                    st_before_check; // 检查启动前的状态
+  std::string                         version;         // 目标版本
+  std::string                         notes;           // 发行说明 (markdown)
+  std::string                         error;           // 错误码/消息
+  int                                 progress;        // 0..100
+  time_t                              last;            // 最近检查时间
+  bool                                running;         // 是否有线程在跑
+
+  tm_velopack_rep ()
+      : st (UPDATER_IDLE), st_before_check (UPDATER_IDLE), progress (0),
+        last (0), running (false), feed_base (feed_base_url ()),
+        feed_channel (update_channel ()) {}
+  ~tm_velopack_rep () {
+    if (worker.joinable ()) worker.join ();
+  }
+};
+
+tm_velopack::tm_velopack () : rep (std::make_unique<tm_velopack_rep> ()) {}
+
+tm_velopack::~tm_velopack () {}
+
+void
+tm_velopack::ensure_mgr () {
+  // mgr 惰性创建，并随 stem-profile/channel 变化重建：检查/下载启动时主线程
+  // 把当前 base URL 与通道快照到 feed_base/feed_channel，这里按快照建/重建
+  // mgr，切换 profile 或通道后下一次检查即换源。重建只发生在 worker 内且
+  // mgr 未被并发使用（状态机保证同一时刻至多一个 worker，APPLYING 期间不
+  // 接受新检查），无需额外同步。
+  // ExplicitChannel 显式取首选项值（而非跟随安装包默认通道），保证与首选项
+  // UI 可见的通道一致；AllowVersionDowngrade 常态开启：beta→stable 回退时
+  // 目标版本可能更低，且 Velopack 仅在「降级允许且显式通道不同于安装包默认
+  // 通道」时才把同版本条目作为更新返回（跨通道同版本切换依赖此语义）。
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  if (!rep->mgr || rep->mgr_base != rep->feed_base ||
+      rep->mgr_channel != rep->feed_channel) {
+    Velopack::UpdateOptions opts;
+    opts.AllowVersionDowngrade      = true;
+    opts.ExplicitChannel            = rep->feed_channel;
+    opts.MaximumDeltasBeforeFallback= 10;
+    rep->mgr= std::make_unique<Velopack::UpdateManager> (
+        feed_url (rep->feed_base), &opts);
+    rep->mgr_base   = rep->feed_base;
+    rep->mgr_channel= rep->feed_channel;
+  }
+}
+
+bool
+tm_velopack::checkInBackground () {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  if (rep->running) return false;
+  if (rep->st == UPDATER_APPLYING) return false; // 应用更新期间不接受新检查
+  if (rep->worker.joinable ()) rep->worker.join ();
+  // 主线程快照当前 stem-profile 对应的 base URL 与 update-channel 通道；
+  // worker 内 ensure_mgr 按此快照建/重建 mgr，避免工作线程触碰首选项
+  // （scheme 回调非线程安全）。
+  rep->feed_base   = feed_base_url ();
+  rep->feed_channel= update_channel ();
+  // 启动检查置 CHECKING；同时保存检查前状态，do_check 结果驱动时据此判断
+  // 是否保持 READY「待应用」（复查不应把它冲掉，否则要重新下载）。
+  rep->st_before_check= rep->st;
+  rep->st             = UPDATER_CHECKING;
+  rep->running        = true;
+  rep->worker         = std::thread ([this] { do_check (); });
+  return true;
+}
+
+time_t
+tm_velopack::lastCheck () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return rep->last;
+}
+
+void
+tm_velopack::do_check () {
+  try {
+    ensure_mgr ();
+    std::optional<Velopack::UpdateInfo> u= rep->mgr->CheckForUpdates ();
+    std::lock_guard<std::mutex>         lk (rep->mtx);
+    if (rep->st == UPDATER_APPLYING) { // 应用已开始，本次结果作废
+      rep->running= false;
+      return;
+    }
+    if (u) {
+      // 已就绪的同版（或更旧）更新不再进入 AVAILABLE：一次复查不应把 READY
+      // 「待应用」冲掉，否则要重新下载。仅当版本更高（或当前不在 READY，如
+      // 失败后重试）时才覆盖为目标版本。
+      // 例外：跨通道检查（缓存 info 来自另一通道）总是接受返回的目标——
+      // 切换通道后的目标可能同版本或更低（Velopack 侧已按 ExplicitChannel
+      // + AllowVersionDowngrade 决定返回什么），本地版本比较不再过滤。
+      bool channel_switched= rep->info_channel != rep->feed_channel;
+      bool keep_ready=
+          rep->st_before_check == UPDATER_READY && !channel_switched &&
+          !newer_version (u->TargetFullRelease.Version, rep->version);
+      if (keep_ready) {
+        rep->st= UPDATER_READY; // 复查后仍保持「待应用」
+      }
+      else {
+        rep->info        = u;
+        rep->st          = UPDATER_AVAILABLE;
+        rep->version     = u->TargetFullRelease.Version;
+        rep->notes       = u->TargetFullRelease.NotesMarkdown;
+        rep->info_channel= rep->feed_channel;
+      }
+    }
+    else {
+      // 无更新：失败标记被清除；其余状态恢复到检查前的结论（复查不改变
+      // 既有状态）。
+      if (rep->info_channel != rep->feed_channel) {
+        // 例外：跨通道检查无更新——旧通道的缓存 info 与「待应用」就绪状态
+        // 作废（用户已切换通道，旧通道的包不应再被应用）。
+        rep->st= UPDATER_IDLE;
+        rep->info.reset ();
+        rep->info_channel.clear ();
+        rep->version.clear ();
+        rep->notes.clear ();
+      }
+      else if (rep->st_before_check == UPDATER_FAILED) {
+        rep->st   = UPDATER_IDLE;
+        rep->error= "";
+      }
+      else {
+        rep->st= rep->st_before_check;
+      }
+    }
+    rep->last   = time (NULL);
+    rep->running= false;
+  } catch (...) {
+    std::lock_guard<std::mutex> lk (rep->mtx);
+    rep->st     = UPDATER_FAILED;
+    rep->error  = exception_message ();
+    rep->running= false;
+  }
+}
+
+tm_updater_state
+tm_velopack::state () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return rep->st;
+}
+
+string
+tm_velopack::availableVersion () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return string (rep->version.c_str ());
+}
+
+string
+tm_velopack::releaseNotes () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return string (rep->notes.c_str ());
+}
+
+int
+tm_velopack::progress () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return rep->progress;
+}
+
+string
+tm_velopack::errorCode () const {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  return string (rep->error.c_str ());
+}
+
+bool
+tm_velopack::downloadUpdate () {
+  std::lock_guard<std::mutex> lk (rep->mtx);
+  if (rep->st != UPDATER_AVAILABLE) return false;
+  if (rep->running) return false;
+  if (rep->worker.joinable ()) rep->worker.join ();
+  // 下载前同样按当前 stem-profile/update-channel 刷新快照，切换后 mgr 立即
+  // 换源；DownloadUpdates 使用 info 内已解析的资产 URL，重建 mgr 不影响
+  // 本次下载。
+  rep->feed_base   = feed_base_url ();
+  rep->feed_channel= update_channel ();
+  rep->st          = UPDATER_DOWNLOADING;
+  rep->running     = true;
+  rep->worker      = std::thread ([this] { do_download (); });
+  return true;
+}
+
+void
+tm_velopack::progress_cb (void* user_data, size_t progress) {
+  tm_velopack*                self= static_cast<tm_velopack*> (user_data);
+  std::lock_guard<std::mutex> lk (self->rep->mtx);
+  self->rep->progress= static_cast<int> (progress);
+}
+
+void
+tm_velopack::do_download () {
+  try {
+    // info 在锁内取快照后释放锁：锁外读共享 optional 是潜在数据竞争，而
+    // DownloadUpdates 是长时阻塞调用，更不能持锁（否则进度回调与轮询会卡死）。
+    Velopack::UpdateInfo info;
+    {
+      std::lock_guard<std::mutex> lk (rep->mtx);
+      if (rep->st != UPDATER_DOWNLOADING || !rep->info)
+        return; // 仅 downloadUpdate 武装后可达
+      info= *rep->info;
+    }
+    ensure_mgr ();
+    rep->mgr->DownloadUpdates (info, &tm_velopack::progress_cb, this);
+    std::lock_guard<std::mutex> lk (rep->mtx);
+    rep->st     = UPDATER_READY;
+    rep->running= false;
+  } catch (...) {
+    std::lock_guard<std::mutex> lk (rep->mtx);
+    rep->st     = UPDATER_FAILED;
+    rep->error  = exception_message ();
+    rep->running= false;
+  }
+}
+
+bool
+tm_velopack::applyUpdate () {
+  Velopack::UpdateInfo info;
+  {
+    std::lock_guard<std::mutex> lk (rep->mtx);
+    if (rep->st != UPDATER_READY || !rep->info) return false;
+    info   = *rep->info; // 锁内快照，锁外不再读共享 info
+    rep->st= UPDATER_APPLYING;
+  }
+  try {
+    // 拉起更新器进程，它等待本进程退出后应用并重启；本调用启动后即返回。
+    // 不在 C++ 层自行 exit：由 scheme 调用方走 (safely-quit-TeXmacs) 正常退出
+    // 通道，完成保存提示与 on-exit 清理后进程退出，更新器随即接管。
+    // 注意：若调用方仅触发 apply 而不退出（如未来经 Qt controller 直连），
+    // 更新器最多等待 60s 后放弃，且状态停留在 APPLYING。
+    rep->mgr->WaitExitThenApplyUpdates (info.TargetFullRelease,
+                                        /*silent*/ false, /*restart*/ true);
+  } catch (...) {
+    std::lock_guard<std::mutex> lk (rep->mtx);
+    rep->st   = UPDATER_FAILED;
+    rep->error= exception_message ();
+    return false;
+  }
+  return true;
+}
+
+#endif // defined (USE_PLUGIN_VELOPACK) && defined (OS_WIN)

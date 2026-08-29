@@ -148,59 +148,15 @@
 ) ;define
 
 (tm-define roman-letters
-  (list "a"
-    "b"
-    "c"
-    "d"
-    "e"
-    "f"
-    "g"
-    "h"
-    "i"
-    "j"
-    "k"
-    "l"
-    "m"
-    "n"
-    "o"
-    "p"
-    "q"
-    "r"
-    "s"
-    "t"
-    "u"
-    "v"
-    "w"
-    "x"
-    "y"
-    "z"
+  (list "a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r"
+    "s" "t" "u" "v" "w" "x" "y" "z"
   ) ;list
 ) ;tm-define
 
 (tm-define greek-letters
-  (list "<alpha>"
-    "<beta>"
-    "<gamma>"
-    "<delta>"
-    "<epsilon>"
-    "<zeta>"
-    "<eta>"
-    "<theta>"
-    "<iota>"
-    "<kappa>"
-    "<lambda>"
-    "<mu>"
-    "<nu>"
-    "<xi>"
-    "<omicron>"
-    "<pi>"
-    "<rho>"
-    "<sigma>"
-    "<tau>"
-    "<upsilon>"
-    "<phi>"
-    "<psi>"
-    "<chi>"
+  (list "<alpha>" "<beta>" "<gamma>" "<delta>" "<epsilon>" "<zeta>" "<eta>"
+    "<theta>" "<iota>" "<kappa>" "<lambda>" "<mu>" "<nu>" "<xi>" "<omicron>"
+    "<pi>" "<rho>" "<sigma>" "<tau>" "<upsilon>" "<phi>" "<psi>" "<chi>"
     "<omega>"
   ) ;list
 ) ;tm-define
@@ -208,43 +164,10 @@
 (tm-define punctuation-symbols (list "." "," ":" ";" "!" "?"))
 
 (tm-define standard-operators
-  (list "arc"
-    "arc cos"
-    "arc sin"
-    "arc tan"
-    "arccos"
-    "arcsin"
-    "arctan"
-    "arg"
-    "cos"
-    "cosh"
-    "cot"
-    "coth"
-    "csc"
-    "deg"
-    "det"
-    "dim"
-    "exp"
-    "gcd"
-    "hom"
-    "inf"
-    "ker"
-    "lg"
-    "lim"
-    "liminf"
-    "limsup"
-    "lim inf"
-    "lim sup"
-    "ln"
-    "log"
-    "max"
-    "min"
-    "Pr"
-    "sec"
-    "sin"
-    "sinh"
-    "sup"
-    "tan"
+  (list "arc" "arc cos" "arc sin" "arc tan" "arccos" "arcsin" "arctan" "arg"
+    "cos" "cosh" "cot" "coth" "csc" "deg" "det" "dim" "exp" "gcd" "hom" "inf"
+    "ker" "lg" "lim" "liminf" "limsup" "lim inf" "lim sup" "varliminf"
+    "varlimsup" "ln" "log" "max" "min" "Pr" "sec" "sin" "sinh" "sup" "tan"
     "tanh"
   ) ;list
 ) ;tm-define
@@ -372,7 +295,7 @@
   (let* ((l (string-decompose s " "))
          (r (map (cut string-replace-trailing-one <> what by) l))
         ) ;
-    (string-recompose r " ")
+    (string-join r " ")
   ) ;let*
 ) ;tm-define
 
@@ -387,7 +310,7 @@
 
 (define (speech-rewrite*** lan mode h t)
   (with key
-    (locase-all (string-recompose h " "))
+    (locase-all (string-join h " "))
     (if (null? h)
       (if (null? t) t (cons (car t) (speech-rewrite*** lan mode (cdr t) (list))))
       (or (and-with im
@@ -420,7 +343,7 @@
   (set! s (speech-sanitize lan mode s))
   ;; (display* "Sanitized " (cork->utf8 s) "\n")
   (let* ((l (string-decompose s " ")) (r (speech-rewrite* lan mode l)))
-    (string-recompose r " ")
+    (string-join r " ")
   ) ;let*
 ) ;tm-define
 
@@ -472,7 +395,7 @@
 (define (speech-recognizes-list? lan mode h t)
   ;; (display* "    checking " h ", " t "\n")
   (with key
-    (locase-all (string-recompose h " "))
+    (locase-all (string-join h " "))
     (if (null? h)
       (null? t)
       (or (and (or (string->number key)
@@ -512,7 +435,7 @@
 (tm-define (speech-exec-hook l) #f)
 
 (define (speech-exec-list lan h t)
-  (let* ((key* (locase-all (string-recompose h " ")))
+  (let* ((key* (locase-all (string-join h " ")))
          (key (string-append (symbol->string lan) ":" key*))
         ) ;
     ;; (display* "  Try " key* " -> " (kbd-find-key-binding key) "\n")

@@ -192,8 +192,7 @@
     in-text%
   ) ;in-verbatim%
   (in-variants-disabled% (tree-in? (tree-up (cursor-tree)) '(hlink reference
-                                                              pageref
-                                                              label))
+                                                              pageref label))
   ) ;in-variants-disabled%
 ) ;texmacs-modes
 
@@ -202,33 +201,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-public supported-languages
-  '("british"
-    "bulgarian"
-    "chinese"
-    "croatian"
-    "czech"
-    "danish"
-    "dutch"
-    "english"
-    "esperanto"
-    "finnish"
-    "french"
-    "german"
-    "greek"
-    "hungarian"
-    "italian"
-    "japanese"
-    "korean"
-    "polish"
-    "portuguese"
-    "romanian"
-    "russian"
-    "slovak"
-    "slovene"
-    "spanish"
-    "swedish"
-    "taiwanese"
-    "ukrainian")
+  '("british" "bulgarian" "chinese" "croatian" "czech" "danish" "dutch"
+    "english" "esperanto" "finnish" "french" "german" "greek" "hungarian"
+    "italian" "japanese" "korean" "polish" "portuguese" "romanian" "russian"
+    "slovak" "slovene" "spanish" "swedish" "taiwanese" "ukrainian")
 ) ;define-public
 
 (define-public (supported-language? lan)
@@ -247,9 +223,7 @@
                                                          "ukrainian"))
                  in-text%
                ) ;in-cyrillic%
-  (in-oriental% (in? (get-env "language") '("chinese"
-                                            "japanese"
-                                            "korean"
+  (in-oriental% (in? (get-env "language") '("chinese" "japanese" "korean"
                                             "taiwanese"))
     in-text%
   ) ;in-oriental%
@@ -319,7 +293,6 @@
   (with-developer-tool% (== (get-preference "developer tool") "on"))
   (with-linking-tool% (== (get-preference "linking tool") "on"))
   (with-presentation-tool% (== (get-preference "presentation tool") "on"))
-  (with-remote-tool% (== (get-preference "remote tool") "on"))
   (with-source-tool% (== (get-preference "source tool") "on"))
   (with-versioning-tool% (== (get-preference "versioning tool") "on"))
   (with-keyboard-tool% (== (get-preference "keyboard tool") "on"))

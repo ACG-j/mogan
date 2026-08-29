@@ -14,6 +14,12 @@
 (texmacs-module (kernel gui kbd-define) (:use (kernel texmacs tm-define)))
 
 (import (liii hash-table))
+(import (liii queue))
+
+;; (liii logging) 仅 Linux 加载，节省其他平台的加载时间
+(when (os-linux?)
+  (import (liii logging))
+) ;when
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lazy keyboard bindings
@@ -53,19 +59,30 @@
 ) ;define
 
 (tm-define (lazy-keyboard-force . opt)
-  (set! lazy-force-all? (or lazy-force-all? (nnull? opt)))
-  (when (not lazy-force-busy?)
-    (set! lazy-force-busy? #t)
-    (let* ((l1 (reverse lazy-keyboard-waiting)) (l2 (lazy-keyboard-force-do l1)))
-      (set! lazy-keyboard-waiting (reverse l2))
-      (set! lazy-force-busy? #f)
-      (when (null? lazy-keyboard-waiting)
-        (set! lazy-force-all? #f)
-      ) ;when
-      (when (and lazy-force-all? (nnull? lazy-keyboard-waiting))
-        (lazy-keyboard-force #t)
-      ) ;when
-    ) ;let*
+  ;; 等待队列为空且非强制时直接返回，避免每次查表都白走一趟
+  (when (or (nnull? opt) (nnull? lazy-keyboard-waiting))
+    (debug-message "debug-std"
+      (string-append "lazy-keyboard-force called, opt="
+        (object->string opt)
+        ", waiting="
+        (number->string (length lazy-keyboard-waiting))
+        "\n"
+      ) ;string-append
+    ) ;debug-message
+    (set! lazy-force-all? (or lazy-force-all? (nnull? opt)))
+    (when (not lazy-force-busy?)
+      (set! lazy-force-busy? #t)
+      (let* ((l1 (reverse lazy-keyboard-waiting)) (l2 (lazy-keyboard-force-do l1)))
+        (set! lazy-keyboard-waiting (reverse l2))
+        (set! lazy-force-busy? #f)
+        (when (null? lazy-keyboard-waiting)
+          (set! lazy-force-all? #f)
+        ) ;when
+        (when (and lazy-force-all? (nnull? lazy-keyboard-waiting))
+          (lazy-keyboard-force #t)
+        ) ;when
+      ) ;let*
+    ) ;when
   ) ;when
 ) ;tm-define
 
@@ -123,9 +140,119 @@
   (ahash-set! kbd-rev-table key im)
 ) ;define
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Delayed (chunked) registration of keyboard bindings
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define kbd-pending (make-list-queue '()))
+
+;; 泵/flush 执行期间为 #t，防止经 getter 重入 drain
+
+(define kbd-pumping? #f)
+
+(define kbd-pump-armed? #f)
+
+;; 分片日志仅 Linux 启用（/tmp 路径语义）；文件 handler 全局唯一，惰性初始化
+
+(define kbd-pump-log-inited? #f)
+
+(define (kbd-pump-log msg)
+  (when (os-linux?)
+    (when (not kbd-pump-log-inited?)
+      (log-set-file-handler! "/tmp/kbd-pump.log")
+      (set! kbd-pump-log-inited? #t)
+    ) ;when
+    (log-info msg)
+    ;; liii logging 只在 s7 exit-hook 里 flush,mogan 退出不走该钩子,逐条 flush
+    (log-flush!)
+  ) ;when
+) ;define
+
+(tm-define (kbd-flush-pending)
+  ;; 同步跑完剩余全部注册，供读写三张表前兜底
+  (when (and (not (list-queue-empty? kbd-pending)) (not kbd-pumping?))
+    (set! kbd-pumping? #t)
+    (let ((n 0) (start (texmacs-time)))
+      (while (not (list-queue-empty? kbd-pending))
+       ((list-queue-remove-front! kbd-pending))
+       (set! n (+ n 1))
+      ) ;while
+      (kbd-pump-log (string-append "kbd-flush: drained "
+                      (number->string n)
+                      " bindings in "
+                      (number->string (- (texmacs-time) start))
+                      " ms"
+                    ) ;string-append
+      ) ;kbd-pump-log
+    ) ;let
+    (set! kbd-pumping? #f)
+  ) ;when
+) ;tm-define
+
+(tm-define (kbd-pending-empty?) (list-queue-empty? kbd-pending))
+
+(define kbd-pump-budget 5)
+
+;; 每片注册条数，初始 10，按上片实测耗时向 budget 等比自适应
+
+(define kbd-pump-batch 10)
+
+(define (kbd-pump)
+  (set! kbd-pump-armed? #f)
+  (set! kbd-pumping? #t)
+  (let* ((start (texmacs-time)) (n 0))
+    ;; 每片最多 kbd-pump-batch 条，片间让出事件循环使用户输入可插队
+    (while (and (not (list-queue-empty? kbd-pending)) (< n kbd-pump-batch))
+     ((list-queue-remove-front! kbd-pending))
+     (set! n (+ n 1))
+    ) ;while
+    (with elapsed
+      (- (texmacs-time) start)
+      (when (> n 0)
+        ;; 按实测耗时等比调整批量；不足 1ms 测不出时翻倍试探
+        (set! kbd-pump-batch
+          (if (> elapsed 0) (max 1 (quotient (* n kbd-pump-budget) elapsed)) (* n 2))
+        ) ;set!
+        (kbd-pump-log (string-append "kbd-pump: registered "
+                        (number->string n)
+                        " bindings in "
+                        (number->string elapsed)
+                        " ms (next batch "
+                        (number->string kbd-pump-batch)
+                        ")"
+                      ) ;string-append
+        ) ;kbd-pump-log
+      ) ;when
+    ) ;with
+  ) ;let*
+  (set! kbd-pumping? #f)
+  (when (and (not (list-queue-empty? kbd-pending)) (not kbd-pump-armed?))
+    (set! kbd-pump-armed? #t)
+    (exec-delayed kbd-pump)
+  ) ;when
+) ;define
+
+(tm-define (kbd-enqueue thunks)
+  ;; thunks 为 per-binding thunk 列表，整体按序入队
+  ;; tm-define:delayed-kbd-map 的展开式在调用方模块中求值，需导出
+  (for-each (lambda (t) (list-queue-add-back! kbd-pending t)) thunks)
+  (when (and (nnull? thunks) (not kbd-pump-armed?) (not kbd-pumping?))
+    (set! kbd-pump-armed? #t)
+    (exec-delayed kbd-pump)
+  ) ;when
+) ;tm-define
+
+;; kbd-get-map 保持纯读，不隐式 drain：需要一致性的入口显式调
+;; kbd-flush-pending（kbd-find-key-binding / kbd-find-prefix-tab-inner /
+;; 快捷键编辑器工具）。注意同步写不再触发 drain，与在途 delayed 批次
+;; 绑定同键同条件时，批次 drain 时后执行会覆盖同步写
+
 (define (kbd-get-map key)
   (ahash-ref kbd-map-table key)
 ) ;define
+
+;; inv/rev 是菜单反查显示路径，不 drain：避免菜单重建把队列同步抽干，
+;; 容忍短暂缺失（与 lazy-keyboard 未加载模块时菜单无快捷键同语义）
 
 (define (kbd-get-inv key)
   (ahash-ref kbd-inv-table key)
@@ -141,7 +268,10 @@
 ) ;define
 
 (define (simple-insert l x)
-  (if (nlist? l) (list x) (list-union (list x) l))
+  (cond ((nlist? l) (list x))
+        ((member x l) l)
+        (else (cons x l))
+  ) ;cond
 ) ;define
 
 (define (simple-remove l x)
@@ -179,6 +309,8 @@
   (:synopsis "Find the command associated to the keystroke @key")
   ;; (display* "Find binding '" key "'\n")
   (lazy-keyboard-force)
+  ;; 按键是正确性关键路径：查表前必须 drain 在途 delayed 批次
+  (kbd-flush-pending)
   (ctx-resolve (kbd-get-map key) #f)
 ) ;tm-define
 
@@ -232,6 +364,8 @@
 ) ;tm-define
 
 (tm-define (kbd-find-prefix-tab-inner prefix)
+  ;; 直读 kbd-map-table 绕过 getter，需显式 drain
+  (kbd-flush-pending)
   (let* ((pairs (filter (lambda (pair)
                           (let* ((key (car pair)) (val (cdr pair)))
                             (and (string? key)
@@ -259,14 +393,14 @@
   ) ;let*
 ) ;tm-define
 
-(define kbd-find-prefix-tab-cache (make-hash-table))
+(define kbd-find-prefix-tab-cache (s7-make-hash-table))
 
 (tm-define (kbd-find-prefix-tab prefix)
   (let ((cached (hash-table-ref/default kbd-find-prefix-tab-cache prefix #f)))
     (if cached
       cached
       (let ((result (kbd-find-prefix-tab-inner prefix)))
-        (hash-table-set! kbd-find-prefix-tab-cache prefix result)
+        (s7-hash-table-set! kbd-find-prefix-tab-cache prefix result)
         result
       ) ;let
     ) ;if
@@ -307,13 +441,14 @@
 ) ;define
 
 (define (kbd-sub-bindings-sub conds s prev-end end)
-  (cond ((== end (string-length s)) (noop))
-        ((== (string-ref s end) #\space)
-         (kbd-sub-binding conds s prev-end end)
-         (kbd-sub-bindings-sub conds s end (+ end 1))
-        ) ;
-        (else (kbd-sub-bindings-sub conds s prev-end (+ end 1)))
-  ) ;cond
+  ;; 用 C 级 char-position 直接跳到下一个空格，替代逐字符递归扫描
+  (with pos
+    (char-position #\space s end)
+    (when pos
+      (kbd-sub-binding conds s prev-end pos)
+      (kbd-sub-bindings-sub conds s pos (+ pos 1))
+    ) ;when
+  ) ;with
 ) ;define
 
 (define (kbd-sub-bindings conds s)
@@ -375,6 +510,64 @@
 (tm-define-macro (kbd-map . l)
   (:synopsis "Add entries in @l to the keyboard mapping")
   `(begin ,@(kbd-map-body '() l))
+) ;tm-define-macro
+
+(tm-define (utf8-kbd-binding conds key2 cmd help)
+  (:synopsis "Helper routine for utf8-kbd-map macro")
+  (with key
+    (kbd-pre-rewrite (string-convert key2 "UTF-8" "Cork"))
+    (kbd-sub-bindings conds key)
+    (kbd-insert-key-binding conds key (list cmd help))
+  ) ;with
+) ;tm-define
+
+(define (utf8-kbd-map-one conds l)
+  (if (not (and (pair? l) (string? (car l)) (pair? (cdr l))))
+    (texmacs-error "utf8-kbd-map-pre-one" "Bad keymap in: ~S" l)
+  ) ;if
+  (with (key action . opt)
+    l
+    (if (string? action)
+      (with help
+        (if (null? opt) "" (car opt))
+        `(utf8-kbd-binding (list ,@conds) ,key ,action ,help)
+      ) ;with
+      `(utf8-kbd-binding (list ,@conds) ,key (lambda ,() ,action ,@opt) ,"")
+    ) ;if
+  ) ;with
+) ;define
+
+(define (utf8-kbd-map-body conds l)
+  (cond ((null? l) '())
+        ((symbol? (car l)) (utf8-kbd-map-body (list 0 (car l)) (cdr l)))
+        ((and (pair? (car l)) (== (caar l) :profile))
+         (if (not (has-look-and-feel? (cdar l)))
+           '((noop))
+           (utf8-kbd-map-body conds (cdr l))
+         ) ;if
+        ) ;
+        ((and (pair? (car l)) (keyword? (caar l)))
+         (utf8-kbd-map-body (kbd-add-condition conds (car l)) (cdr l))
+        ) ;
+        (else (map (lambda (x) (utf8-kbd-map-one conds x)) l))
+  ) ;cond
+) ;define
+
+(tm-define-macro (utf8-kbd-map . l)
+  (:synopsis "Add entries with UTF-8 key names to the keyboard mapping")
+  `(begin ,@(utf8-kbd-map-body '() l))
+) ;tm-define-macro
+
+(tm-define-macro (delayed-kbd-map . l)
+  (:synopsis "Like kbd-map, but register bindings in chunks via the event loop")
+  `(kbd-enqueue (list ,@(map (lambda (x) `(lambda ,() ,x)) (kbd-map-body '() l))))
+) ;tm-define-macro
+
+(tm-define-macro (utf8-delayed-kbd-map . l)
+  (:synopsis "Like utf8-kbd-map, but register bindings in chunks via the event loop"
+  ) ;:synopsis
+  `(kbd-enqueue (list ,@(map (lambda (x) `(lambda ,() ,x))
+                          (utf8-kbd-map-body '() l))))
 ) ;tm-define-macro
 
 (define (kbd-remove-one conds key)
@@ -525,6 +718,7 @@
 ;; 2. 返回结果中的条件部分始终是一个列表（如 `((cond1) (cond2))`），
 ;;   因为 Mogan 允许一个快捷键绑定同时依赖多个条件（逻辑与关系）。
 (tm-define (get-kbd-bindings key-str)
+  (kbd-flush-pending)
   (let ((raw-map (kbd-get-map key-str)))
     (if (not raw-map)
       (list 'not-bound)
@@ -676,6 +870,7 @@
 ;; - 如果存在冲突：返回冲突绑定的命令源码（通常是一个列表）。
 ;; - 如果无冲突：返回 #f。
 (tm-define (kbd-conflict-query conds new-key)
+  (kbd-flush-pending)
   (let ((raw-map (kbd-get-map new-key)))
     (if raw-map
       (let loop
@@ -734,6 +929,7 @@
 ;; - 删除: old-key="C-b",  new-key="" -> C-b 被解绑，且没有新绑定生成。
 ;; - 无效操作：都为空，直接返回。
 (tm-define (kbd-execute-edit conds cmd old-key new-key)
+  (kbd-flush-pending)
   ;; 1. 如果提供了旧按键，则尝试删除旧绑定
   (when (and (string? old-key) (> (string-length old-key) 0))
     (let ((raw-map (kbd-get-map old-key)))

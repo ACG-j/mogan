@@ -11,7 +11,8 @@
 
 #include "renderer.hpp"
 #include "Freetype/tt_face.hpp"
-#include "colors.hpp"
+#include <moebius/data/colors.hpp>
+using namespace moebius::data;
 #include "frame.hpp"
 #include "image_files.hpp"
 #include "rectangles.hpp"
@@ -500,7 +501,8 @@ renderer_rep::draw_emoji (int char_code, font_glyphs fn, SI x, SI y) {
   // Calculate emoji size
   SI    xo, yo;
   glyph pre_gl= fn->get (char_code);
-  glyph gl    = shrink (pre_gl, std_shrinkf, std_shrinkf, xo, yo);
+  if (is_nil (pre_gl)) return false;
+  glyph gl= shrink (pre_gl, std_shrinkf, std_shrinkf, xo, yo);
   int   w= gl->width, h= gl->height;
   if (is_printer ()) {
     w= pre_gl->width, h= pre_gl->height;
@@ -653,6 +655,8 @@ delete_renderer (renderer ren) {
 }
 
 #ifndef QTTEXMACS
+#ifndef USE_MUPDF_RENDERER
+// MuPDF 模块中已经实现了渲染器
 
 picture
 native_picture (int w, int h, int ox, int oy) {
@@ -696,4 +700,5 @@ save_picture (url dest, picture p) {
   TM_FAILED ("not yet implemented");
 }
 
+#endif
 #endif

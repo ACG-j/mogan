@@ -28,6 +28,25 @@ struct PdfLink {
 };
 
 /**
+ * @brief PDF 大纲（书签）条目，对应 fz_outline 的一个节点
+ */
+struct PdfOutlineItem {
+  QString                 title;    // 节点标题
+  int                     page;     // 解析后的目标页（0-based），-1 表示未解析
+  QVector<PdfOutlineItem> children; // 子节点（fz_outline::down）
+};
+
+/**
+ * @brief 通用大纲条目，用于 OutlineWidget。
+ * target 含义由使用方解释：PDF 模式为页码字符串，编辑器模式为文档树路径。
+ */
+struct OutlineItem {
+  QString              title;    // 节点标题
+  QString              target;   // 导航目标（页码或路径字符串）
+  QVector<OutlineItem> children; // 子节点
+};
+
+/**
  * @brief Key for per-page render cache
  */
 struct PdfPageCacheKey {
@@ -87,11 +106,14 @@ public:
 
   void updateZoomDisplay ();
 
+  void showContextMenu (const QPoint& pos);
+
 Q_SIGNALS:
   void linkClicked (const QString& uri);
   void zoomChanged (const QString& text);
   void pageChanged (int current, int total);
   void rectSelectModeChanged (bool checked);
+  void outlineLoaded (const QVector<PdfOutlineItem>& outline);
 
 public slots:
   void setRectSelectMode (bool checked);
@@ -114,12 +136,16 @@ private:
   int     pageWidth () const;
   void    applyZoomToLabels ();
   void    finishRectSelect (const QPoint& viewportPos);
+  void    showHintToast (const QString& text);
+  void    restoreSelectHint ();
+  void    dismissHintToast ();
   QLabel* findPageLabelAt (const QPoint& contentPos) const;
   QPixmap extractSelectionPixmap (QLabel*      label,
                                   const QRect& contentRect) const;
 
   void    extractPageLinks ();
   void    clearPageLinks ();
+  void    extractOutline ();
   PdfLink linkAtPos (const QPoint& contentPos) const;
   void    handleLinkClick (const PdfLink& link);
   void    updateLinkCursor (const QPoint& contentPos);
@@ -138,6 +164,7 @@ private:
   QPoint       rectSelectStart_;
   bool         rectSelectDragging_;
   QLabel*      hintLabel_;
+  bool         hintToastActive_;
 
   // Browse (hand) tool state
   bool       browseDragging_;
@@ -146,6 +173,7 @@ private:
   QScroller* scroller_;
 
   QByteArray pdfData_;
+  QString    pdfFilePath_;
   int        pageCount_;
   bool       hasError_;
   QString    errorString_;
@@ -161,6 +189,9 @@ private:
   QVector<QVector<PdfLink>> pageLinks_;
   PdfLink                   currentLink_;
   bool                      overLink_;
+
+  // PDF 大纲（书签）树，loadFromFile 后由 extractOutline 填充
+  QVector<PdfOutlineItem> outlineItems_;
 
   // 页面渲染缓存：key = (pageNumber, targetWidth)
   QHash<PdfPageCacheKey, QPixmap> pageCache_;
@@ -197,6 +228,11 @@ private:
   static constexpr double ZOOM_LEVELS[ZOOM_LEVEL_COUNT]{
       0.25, 0.33, 0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 3.00, 4.00, 6.00, 8.00};
 };
+
+Q_DECLARE_METATYPE (PdfOutlineItem);
+Q_DECLARE_METATYPE (QVector<PdfOutlineItem>);
+Q_DECLARE_METATYPE (OutlineItem);
+Q_DECLARE_METATYPE (QVector<OutlineItem>);
 
 /* PdfPageCacheKey qHash defined above */
 

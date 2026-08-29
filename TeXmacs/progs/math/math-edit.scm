@@ -44,11 +44,7 @@
              (type (and last (math-symbol-type last)))
             ) ;
         (nin? type
-          (list "prefix"
-            "infix"
-            "separator"
-            "prefix-infix"
-            "opening-bracket"
+          (list "prefix" "infix" "separator" "prefix-infix" "opening-bracket"
             "middle-bracket"
           ) ;list
         ) ;nin?
@@ -96,12 +92,8 @@
            (type (if (string? s) (math-symbol-type s) "symbol"))
           ) ;
       (when (in? type
-              (list "postfix"
-                "infix"
-                "separator"
-                "prefix-infix"
-                "middle-bracket"
-                "closing-bracket"
+              (list "postfix" "infix" "separator" "prefix-infix"
+                "middle-bracket" "closing-bracket"
               ) ;list
             ) ;in?
         (remove-text #f)
@@ -140,24 +132,23 @@
   (let* ((c (tree-ref t 0))
          (l0 (concat-decompose c))
          (l2 (list-scatter l0 binary-relation? #t))
-        )
+        ) ;
     (if (>= (length l2) 2)
-        (let* ((col1 (apply tmconcat (car l2)))
-               (col2 (apply tmconcat (cadr l2)))
-               (r `(tformat (table (row (cell ,col1) (cell ,col2))
-                                   (row (cell "") (cell "")))))
-              )
-          (tree-set! c r)
-          (tree-go-to t 0 0 1 0 0 :end)
-        )
-        (let* ((r `(tformat (table (row (cell ,c) (cell ""))
-                                   (row (cell "") (cell "")))))
-              )
-          (tree-set! c r)
-          (tree-go-to t 0 0 1 0 0 :end)
-        )
-    )
-  )
+      (let* ((col1 (apply tmconcat (car l2)))
+             (col2 (apply tmconcat (cadr l2)))
+             (r `(tformat (table (row (cell ,col1) (cell ,col2))
+                            (row (cell "") (cell "")))))
+            ) ;
+        (tree-set! c r)
+        (tree-go-to t 0 0 1 0 0 :end)
+      ) ;let*
+      (let* ((r `(tformat (table (row (cell ,c) (cell ""))
+                            (row (cell "") (cell ""))))))
+        (tree-set! c r)
+        (tree-go-to t 0 0 1 0 0 :end)
+      ) ;let*
+    ) ;if
+  ) ;let*
 ) ;tm-define
 
 (tm-define (label-insert t)
@@ -271,16 +262,9 @@
 (tm-define (inside-comment-or-balloon? t)
   (and t
     (if (tree-search-upwards t
-          '(folded-comment unfolded-comment
-             mirror-comment
-             carbon-comment
-             nested-comment
-             hover-balloon
-             hover-balloon*
-             popup-balloon
-             popup-balloon*
-             focus-balloon
-             help-balloon)
+          '(folded-comment unfolded-comment mirror-comment carbon-comment
+             nested-comment hover-balloon hover-balloon* popup-balloon
+             popup-balloon* focus-balloon help-balloon)
         ) ;tree-search-upwards
       #t
       #f
@@ -536,27 +520,17 @@
 ) ;define
 
 (define wide-list-3
-  '("<wide-overbrace>"
-    "<wide-underbrace*>"
-    "<wide-poverbrace>"
-    "<wide-punderbrace*>"
-    "<wide-sqoverbrace>"
-    "<wide-squnderbrace*>")
+  '("<wide-overbrace>" "<wide-underbrace*>" "<wide-poverbrace>"
+    "<wide-punderbrace*>" "<wide-sqoverbrace>" "<wide-squnderbrace*>")
 ) ;define
 
 (define wide-list-4
-  '("<wide-underbrace>"
-    "<wide-overbrace*>"
-    "<wide-punderbrace>"
-    "<wide-poverbrace*>"
-    "<wide-squnderbrace>"
-    "<wide-sqoverbrace*>")
+  '("<wide-underbrace>" "<wide-overbrace*>" "<wide-punderbrace>"
+    "<wide-poverbrace*>" "<wide-squnderbrace>" "<wide-sqoverbrace*>")
 ) ;define
 
 (define wide-list-5
-  '("<wide-varrightarrow>"
-    "<wide-varleftarrow>"
-    "<wide-varleftrightarrow>"
+  '("<wide-varrightarrow>" "<wide-varleftarrow>" "<wide-varleftrightarrow>"
     "<wide-bar>")
 ) ;define
 
@@ -631,35 +605,15 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define lbrackets
-  '("("
-    "["
-    "{"
-    "<langle>"
-    "<llbracket>"
-    "<lfloor>"
-    "<lceil>"
-    "|"
-    "<||>"
-    "/"
-    "\\"
-    "<nobracket>")
+  '("(" "[" "{" "<langle>" "<llbracket>" "<lfloor>" "<lceil>" "|" "<||>" "/"
+    "\\" "<nobracket>")
 ) ;define
 
 (define mbrackets '("|" "<||>" "/" "\\"))
 
 (define rbrackets
-  '(")"
-    "]"
-    "}"
-    "<rangle>"
-    "<rrbracket>"
-    "<rfloor>"
-    "<rceil>"
-    "|"
-    "<||>"
-    "\\"
-    "/"
-    "<nobracket>")
+  '(")" "]" "}" "<rangle>" "<rrbracket>" "<rfloor>" "<rceil>" "|" "<||>" "\\"
+    "/" "<nobracket>")
 ) ;define
 
 (define (bracket-circulate t forward? brackets)
@@ -694,29 +648,10 @@
 ) ;tm-define
 
 (define bigops
-  '("<int>"
-    "<intlim>"
-    "<oint>"
-    "<ointlim>"
-    "<sum>"
-    "<prod>"
-    "<amalg>"
-    "<cap>"
-    "<cup>"
-    "<sqcap>"
-    "<sqcup>"
-    "<vee>"
-    "<wedge>"
-    "<curlyvee>"
-    "<curlywedge>"
-    "<odot>"
-    "<otimes>"
-    "<oplus>"
-    "<triangleup>"
-    "<triangledown>"
-    "<box>"
-    "<parallel>"
-    "<interleave>")
+  '("<int>" "<intlim>" "<oint>" "<ointlim>" "<sum>" "<prod>" "<amalg>" "<cap>"
+    "<cup>" "<sqcap>" "<sqcup>" "<vee>" "<wedge>" "<curlyvee>" "<curlywedge>"
+    "<odot>" "<otimes>" "<oplus>" "<triangleup>" "<triangledown>" "<box>"
+    "<parallel>" "<interleave>")
 ) ;define
 
 (tm-define (variant-circulate t forward?)
@@ -1433,13 +1368,95 @@
   ) ;let
 ) ;tm-define
 
+(define wide-variant-alist
+  '((tilde "~" "~")
+    (hat "^" "^")
+    (bar "<bar>" "<bar>")
+    (vector "<vect>" "<vect>")
+    (check "<check>" "<check>")
+    (breve "<breve>" "<breve>")
+    (invbreve "<invbreve>" "<invbreve>")
+    (acute "<acute>" "<acute>")
+    (grave "<grave>" "<grave>")
+    (dot "<dot>" "<dot>")
+    (ddot "<ddot>" "<ddot>")
+    (dddot "<dddot>" "<dddot>")
+    (ddddot "<ddddot>" "<ddddot>")
+    (circle "<abovering>" "<abovering>")
+    (overbrace "<wide-overbrace>" "<wide-overbrace*>")
+    (underbrace "<wide-underbrace*>" "<wide-underbrace>")
+    (poverbrace "<wide-poverbrace>" "<wide-poverbrace*>")
+    (punderbrace "<wide-punderbrace*>" "<wide-punderbrace>")
+    (sqoverbrace "<wide-sqoverbrace>" "<wide-sqoverbrace*>")
+    (squnderbrace "<wide-squnderbrace*>" "<wide-squnderbrace>")
+    (rightarrow "<wide-varrightarrow>" "<wide-varrightarrow>")
+    (leftarrow "<wide-varleftarrow>" "<wide-varleftarrow>")
+    (leftrightarrow "<wide-varleftrightarrow>" "<wide-varleftrightarrow>")
+    (wide-bar "<wide-bar>" "<wide-bar>"))
+) ;define
+
+(tm-define (get-accent-variant t)
+  (:require (tree-in? t '(wide wide*)))
+  (when (and (== (tree-arity t) 2) (tree-atomic? (tree-ref t 1)))
+    (with s
+      (tree->string (tree-ref t 1))
+      (let* ((above? (tree-is? t 'wide)) (idx (if above? 1 2)))
+        (let loop
+          ((alist wide-variant-alist))
+          (cond ((null? alist) #f)
+                ((== s (list-ref (car alist) idx)) (caar alist))
+                (else (loop (cdr alist)))
+          ) ;cond
+        ) ;let
+      ) ;let*
+    ) ;with
+  ) ;when
+) ;tm-define
+
+(tm-define (get-accent-variants-list t)
+  (:require (tree-in? t '(wide wide*)))
+  (with v
+    (get-accent-variant t)
+    (cond ((not v) '(tilde))
+          ((in? v '(tilde hat bar vector check breve invbreve))
+           '(tilde hat bar vector check breve invbreve)
+          ) ;
+          ((in? v '(acute grave dot ddot dddot ddddot circle))
+           '(acute grave dot ddot dddot ddddot circle)
+          ) ;
+          ((in? v '(overbrace underbrace poverbrace punderbrace sqoverbrace
+                     squnderbrace))
+           '(overbrace underbrace poverbrace punderbrace sqoverbrace
+              squnderbrace)
+          ) ;
+          ((in? v '(rightarrow leftarrow leftrightarrow wide-bar))
+           '(rightarrow leftarrow leftrightarrow wide-bar)
+          ) ;
+          (else '(tilde))
+    ) ;cond
+  ) ;with
+) ;tm-define
+
+(tm-define (variant-set t v)
+  (:require (tree-in? t '(wide wide*)))
+  (let ((pair (assoc v wide-variant-alist)))
+    (when pair
+      (let* ((above? (tree-is? t 'wide)) (sym (if above? (cadr pair) (caddr pair))))
+        (when (== (tree-arity t) 2)
+          (tree-set t 1 sym)
+        ) ;when
+      ) ;let*
+    ) ;when
+  ) ;let
+) ;tm-define
+
 (tm-define (kbd-paste)
   (:require (in-math?))
   ;; 在数学模式下粘贴
   ;; 如果剪贴板中的内容是图像，调用 ocr-paste
   ;; 否则调用原来的 kbd-paste
   (if (string-starts? (qt-clipboard-format) "image")
-    (ocr-paste)
+    (ocr-paste "image")
     (clipboard-paste "primary")
   ) ;if
 ) ;tm-define

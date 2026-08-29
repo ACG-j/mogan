@@ -1,36 +1,24 @@
 (define-library (liii stack)
-  (export make-stack
-    stack
-    stack?
-    stack-empty?
-    stack-top
-    stack-size
-    stack-push!
-    stack-pop!
-    stack->list
-    list->stack
-    stack-map
-    stack-map!
-    stack-for-each
+  (export make-stack stack stack? stack-empty? stack-top stack-size stack-push!
+    stack-pop! stack->list list->stack stack-map stack-map! stack-for-each
     stack-copy
   ) ;export
   (import (liii error))
   (begin
 
     (define-record-type stack
-      (%make-stack elements)
+      (%make-stack elements size)
       stack?
-      (elements stack-elements
-        stack-elements-set!
-      ) ;elements
+      (elements stack-elements stack-elements-set!)
+      (size %stack-size stack-size-set!)
     ) ;define-record-type
 
     (define (make-stack . args)
       (if (null? args)
-        (%make-stack '())
+        (%make-stack '() 0)
         (let ((arg (car args)))
           (if (list? arg)
-            (%make-stack arg)
+            (%make-stack arg (length arg))
             (type-error (format #f
                           "make-stack in (liii stack): argument must be *list* type! **Got ~a**"
                           (object->string arg)
@@ -42,7 +30,7 @@
     ) ;define
 
     (define (stack . elements)
-      (%make-stack elements)
+      (%make-stack elements (length elements))
     ) ;define
 
     (define (stack-empty? s)
@@ -65,8 +53,7 @@
         ) ;type-error
       ) ;unless
       (if (stack-empty? s)
-        (value-error "stack-top in (liii stack): stack is empty"
-        ) ;value-error
+        (value-error "stack-top in (liii stack): stack is empty")
         (car (stack-elements s))
       ) ;if
     ) ;define
@@ -79,7 +66,7 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (length (stack-elements s))
+      (%stack-size s)
     ) ;define
 
     (define (stack-push! s elem)
@@ -90,9 +77,8 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (stack-elements-set! s
-        (cons elem (stack-elements s))
-      ) ;stack-elements-set!
+      (stack-elements-set! s (cons elem (stack-elements s)))
+      (stack-size-set! s (+ (%stack-size s) 1))
       s
     ) ;define
 
@@ -105,12 +91,10 @@
         ) ;type-error
       ) ;unless
       (if (stack-empty? s)
-        (value-error "stack-pop! in (liii stack): stack is empty"
-        ) ;value-error
+        (value-error "stack-pop! in (liii stack): stack is empty")
         (let ((top (car (stack-elements s))))
-          (stack-elements-set! s
-            (cdr (stack-elements s))
-          ) ;stack-elements-set!
+          (stack-elements-set! s (cdr (stack-elements s)))
+          (stack-size-set! s (- (%stack-size s) 1))
           top
         ) ;let
       ) ;if
@@ -135,7 +119,7 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (%make-stack lst)
+      (%make-stack lst (length lst))
     ) ;define
 
     (define (stack-map proc s)
@@ -153,8 +137,7 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (%make-stack (map proc (stack-elements s))
-      ) ;%make-stack
+      (%make-stack (map proc (stack-elements s)) (%stack-size s))
     ) ;define
 
     (define (stack-map! proc s)
@@ -172,9 +155,7 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (stack-elements-set! s
-        (map proc (stack-elements s))
-      ) ;stack-elements-set!
+      (stack-elements-set! s (map proc (stack-elements s)))
       s
     ) ;define
 
@@ -204,7 +185,7 @@
                     ) ;format
         ) ;type-error
       ) ;unless
-      (%make-stack (stack-elements s))
+      (%make-stack (stack-elements s) (%stack-size s))
     ) ;define
 
   ) ;begin

@@ -12,8 +12,17 @@
 
 function main()
     return {
+        group_name = "glue_convert",
         binding_object = "",
         initializer_name = "initialize_glue_convert",
+        standalone = true,
+        includes = {
+            "object_l1.hpp",
+            "object_l2.hpp",
+            "scheme.hpp",
+            "convert.hpp",
+            "glue_convert_extra.hpp",
+        },
         glues = {
             {
                 scm_name = "parse-texmacs",
@@ -104,6 +113,22 @@ function main()
                 }
             },
             {
+                scm_name = "string->stree",
+                cpp_name = "string_to_scheme_tree",
+                ret_type = "scheme_tree",
+                arg_list = {
+                    "string"
+                }
+            },
+            {
+                scm_name = "stree->string",
+                cpp_name = "scheme_tree_to_string",
+                ret_type = "string",
+                arg_list = {
+                    "scheme_tree"
+                }
+            },
+            {
                 scm_name = "stree->tree",
                 cpp_name = "scheme_tree_to_tree",
                 ret_type = "tree",
@@ -122,12 +147,28 @@ function main()
                 }
             },
             {
+                scm_name = "cpp-tree->utf8raw",
+                cpp_name = "tree_to_utf8raw",
+                ret_type = "string",
+                arg_list = {
+                    "tree"
+                }
+            },
+            {
                 scm_name = "cpp-verbatim-snippet->texmacs",
                 cpp_name = "verbatim_to_tree",
                 ret_type = "tree",
                 arg_list = {
                     "string",
                     "bool",
+                    "string"
+                }
+            },
+            {
+                scm_name = "cpp-utf8raw->tree",
+                cpp_name = "utf8raw_to_tree",
+                ret_type = "tree",
+                arg_list = {
                     "string"
                 }
             },

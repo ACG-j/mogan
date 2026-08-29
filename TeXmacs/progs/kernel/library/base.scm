@@ -47,6 +47,19 @@
   (list->string (list c))
 ) ;define-public
 
+;; 仅折叠 ASCII A-Z，非 ASCII 字符（含损坏 UTF-8 字节）原样保留。
+;; 与 string-downcase 不同：不触发 string->utf8 整段校验，
+;; 因此可安全用于含损坏 UTF-8 的输入做大小写不敏感的 ASCII 标签/关键字匹配。
+(define-public (safe-ascii-string-downcase s)
+  (string-map (lambda (c)
+                (let ((n (char->integer c)))
+                  (if (and (>= n 65) (<= n 90)) (integer->char (+ n 32)) c)
+                ) ;let
+              ) ;lambda
+    s
+  ) ;string-map
+) ;define-public
+
 (define-public (tm-char-whitespace? c)
   "Is @c a whitespace character?"
   ;; NOTE: this routine is implemented in an incorrect way in certain
@@ -66,18 +79,15 @@
   (!= (string-index s c) #f)
 ) ;define-public
 
+;; C 实现见 goldfish src/liii_string.cpp 的 g_string-starts?/g_string-ends?
 (define-public (string-starts? s what)
   "Test whether @s starts with @what."
-  (let ((n (string-length s)) (k (string-length what)))
-    (and (>= n k) (== (substring s 0 k) what))
-  ) ;let
+  (g_string-starts? s what)
 ) ;define-public
 
 (define-public (string-ends? s what)
   "Test whether @s ends with @what."
-  (let ((n (string-length s)) (k (string-length what)))
-    (and (>= n k) (== (substring s (- n k) n) what))
-  ) ;let
+  (g_string-ends? s what)
 ) ;define-public
 
 (define-public (string-contains? s what)
@@ -96,12 +106,11 @@
   (list->string (reverse cs))
 ) ;provide-public
 
-(provide-public (string-join ss . opt)
-  "Concatenate elements of @ss inserting separators."
-  (if (null? opt)
-    (string-join ss " ")
-    (string-concatenate (list-intersperse ss (car opt)))
-  ) ;if
+;; C 实现见 goldfish src/liii_string.cpp 的 g_string-join，此处直接转调；
+;; 分隔符必传（progs 内调用点均已显式传入）
+(provide-public (string-join ss sep)
+  "Concatenate elements of @ss inserting @sep."
+  (g_string-join ss sep)
 ) ;provide-public
 
 (provide-public (string-drop-right s n)
@@ -218,15 +227,6 @@
   ) ;with
 ) ;define-public
 
-(define-public (string-recompose l sep)
-  "Turn list @l of strings into one string using @sep as separator."
-  (if (char? sep) (set! sep (list->string (list sep))))
-  (cond ((null? l) "")
-        ((null? (cdr l)) (car l))
-        (else (string-append (car l) sep (string-recompose (cdr l) sep)))
-  ) ;cond
-) ;define-public
-
 (define-public (string-tokenize-comma s)
   "Cut string @s into pieces using comma as a separator and remove whitespace."
   (map tm-string-trim-both (string-tokenize-by-char s #\,))
@@ -234,7 +234,7 @@
 
 (define-public (string-recompose-comma l)
   "Turn list @l of strings into comma separated string."
-  (string-recompose l ", ")
+  (string-join l ", ")
 ) ;define-public
 
 (define (property-pair->string p)
@@ -255,7 +255,7 @@
 
 (define-public (alist->string l)
   "Pretty print the association list @l as a string."
-  (string-recompose (map property-pair->string l) "/")
+  (string-join (map property-pair->string l) "/")
 ) ;define-public
 
 (define-public (raw-quote s) (string-append (string-append "\"" s "\"")))
@@ -382,11 +382,7 @@
   (with base
     (buffer-get-master (current-buffer))
     ;; Handle Windows drive letter issues - if different drives, return #f
-    (cond ((and (or (os-mingw?) (os-win32?))
-             (!= (url-drive-letter u) (url-drive-letter base))
-           ) ;and
-           #f
-          ) ;
+    (cond ((and (os-windows?) (!= (url-drive-letter u) (url-drive-letter base))) #f)
           ((and (url-rooted? u) (not (url-none? base))) (url->unix (url-delta base u)))
           (else (url->unix u))
     ) ;cond
@@ -427,7 +423,11 @@
 (define-public (buffer-master) (buffer-get-master (current-buffer)))
 
 (define-public (buffer-in-recent-menu? u)
-  (or (not (url-rooted-tmfs? u)) (string-starts? (url->unix u) "tmfs://part/"))
+  (or (not (url-rooted-tmfs? u))
+    (string-starts? (url->unix u) "tmfs://part/")
+    ;; 协作（云端）文档以 tmfs://collab/<doc_id> 入同一份 Recent，点按 doc_id 重 join
+    (string-starts? (url->unix u) "tmfs://collab/")
+  ) ;or
 ) ;define-public
 
 (define-public (buffer-in-menu? u)

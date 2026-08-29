@@ -66,6 +66,13 @@
       (cpp-set-preference which val)
       (notify-preference which)
       (save-preferences)
+      (when (string-starts? which "plugin:binary")
+        (let ((cache-file (url-append (get-tm-cache-path) "plugin_cache.scm")))
+          (when (url-exists? cache-file)
+            (url-remove cache-file)
+          ) ;when
+        ) ;let
+      ) ;when
     ) ;when
   ) ;with
 ) ;tm-define
@@ -77,6 +84,13 @@
     (cpp-reset-preference which)
     (notify-preference which)
     (save-preferences)
+    (when (string-starts? which "plugin:binary")
+      (let ((cache-file (url-append (get-tm-cache-path) "plugin_cache.scm")))
+        (when (url-exists? cache-file)
+          (url-remove cache-file)
+        ) ;when
+      ) ;let
+    ) ;when
   ) ;when
 ) ;tm-define
 
@@ -141,6 +155,16 @@
   ) ;with
 ) ;tm-define
 
+;; 同 set-pretty-preference 但用 cpp-set-preference-silent 写值（不触发 notify），
+;; 供需重启字段的「稍后」分支使用：写新值下次启动生效，当前会话不实时切。
+(tm-define (set-pretty-preference-silent which pretty-val)
+  (with val
+    (ahash-ref preference-decode-table (cons which pretty-val))
+    (cpp-set-preference-silent which (or val pretty-val))
+    (save-preferences)
+  ) ;with
+) ;tm-define
+
 (tm-define (get-pretty-preference which)
   (with val
     (get-preference which)
@@ -187,11 +211,16 @@
 
 (define (default-look-and-feel)
   (cond ((os-macos?) "macos")
-        ((or (os-win32?) (os-mingw?)) "windows")
+        ((os-windows?) "windows")
         ((== (xdg-dekstop-session) "kde") "kde")
         ((== (xdg-dekstop-session) "deepin") "kde")
         ((== (xdg-dekstop-session) "gnome") "gnome")
         ((== (xdg-dekstop-session) "ubuntu") "gnome")
+        ;; WASM 在浏览器中运行，os-macos?/os-win? 编译期均为 false，故由
+        ;; ImGui/Emscripten 胶水写入的 MOGAN_BROWSER_OS 判定宿主 OS，选用
+        ;; 匹配的键盘映射（Mac → Cmd 快捷键，Windows → Ctrl 快捷键）。
+        ((== (system-getenv "MOGAN_BROWSER_OS") "macos") "macos")
+        ((== (system-getenv "MOGAN_BROWSER_OS") "windows") "windows")
         (else "emacs")
   ) ;cond
 ) ;define

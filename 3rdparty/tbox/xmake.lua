@@ -7,8 +7,10 @@ set_xmakever("2.8.2")
 -- set project version
 set_version("1.7.5", {build = "%Y%m%d", soname = true})
 
--- set warning all as error
-set_warnings("all", "error")
+-- set warning all（移除 "error"：Apple clang 17 / Xcode 26 新增的
+-- -Wuninitialized-const-pointer 会命中 libm/isqrti.c 的基准测试代码，
+-- 若继续把告警升级为错误会导致构建失败；保留 "all" 仍会打印全部告警）
+set_warnings("all")
 
 -- set language: c99
 stdc = "c99"
@@ -27,12 +29,6 @@ add_mxflags("-Wno-error=deprecated-declarations", "-fno-strict-aliasing", "-Wno-
 if has_config("coroutine") then
     -- https://github.com/tboox/tbox/issues/218
     add_cxflags("gcc::-Wno-error=dangling-pointer")
-end
-
--- set wasm toolchain
-if is_plat("wasm") then
-    add_requires("emscripten")
-    set_toolchains("emcc@emscripten")
 end
 
 -- add build modes

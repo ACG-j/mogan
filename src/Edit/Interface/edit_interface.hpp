@@ -35,29 +35,31 @@ string MODE_LANGUAGE (string mode);
 
 class edit_interface_rep : virtual public editor_rep {
 protected:
-  int        env_change;    // which things have been changed ?
-  time_t     last_change;   // time of last processed change
-  time_t     last_update;   // time of last update of menu, icons and footer
-  time_t     last_event;    // time of last event
-  double     anim_next;     // time for next animation
-  bool       full_screen;   // full screen mode ?
-  bool       got_focus;     // do we have keyboard focus ?
-  string     sh_s;          // current string for shortcuts
-  double     sh_mark;       // 0 or mark for undoing shortcut
-  bool       pre_edit_skip; // temporarily disabled pre-edit mechanism
-  string     pre_edit_s;    // pre-edit string
-  double     pre_edit_mark; // 0 or mark for undoing pre-edit
-  widget     popup_win;     // the current popup window
-  tree       message_l;     // a left message to display
-  tree       message_r;     // a right message to display
-  tree       last_l;        // last displayed left message
-  tree       last_r;        // last displayed right message
-  double     zoomf;         // the current zoom factor
-  double     magf;          // the current magnification factor
-  SI         pixel;         // current size of a pixel on the screen
-  SI         zpixel;        // pixel multiplied by zoom factor
-  rectangles copy_always;   // for wiping out cursor
-  int        input_mode;    // INPUT_NORMAL, INPUT_SEARCH, INPUT_REPLACE
+  int        env_change;      // which things have been changed ?
+  time_t     last_change;     // time of last processed change
+  time_t     last_update;     // time of last update of menu, icons and footer
+  time_t     last_event;      // time of last event
+  double     anim_next;       // time for next animation
+  bool       full_screen;     // full screen mode ?
+  bool       got_focus;       // do we have keyboard focus ?
+  string     sh_s;            // current string for shortcuts
+  double     sh_mark;         // 0 or mark for undoing shortcut
+  bool       pre_edit_skip;   // temporarily disabled pre-edit mechanism
+  string     pre_edit_s;      // pre-edit string
+  double     pre_edit_mark;   // 0 or mark for undoing pre-edit
+  widget     popup_win;       // the current popup window
+  tree       message_l;       // a left message to display
+  tree       message_r;       // a right message to display
+  tree       last_l;          // last displayed left message
+  tree       last_r;          // last displayed right message
+  path       menu_focus_path; // focus path at last menu/icons refresh
+  bool       menu_need_save;  // need_save state at last tab-pages refresh
+  double     zoomf;           // the current zoom factor
+  double     magf;            // the current magnification factor
+  SI         pixel;           // current size of a pixel on the screen
+  SI         zpixel;          // pixel multiplied by zoom factor
+  rectangles copy_always;     // for wiping out cursor
+  int        input_mode;      // INPUT_NORMAL, INPUT_SEARCH, INPUT_REPLACE
 
 protected:
   SI         last_x, last_y;
@@ -100,6 +102,7 @@ protected:
   void   table_line_apply (SI x, SI y);
   void   table_line_stop ();
   int    table_scale_handle_type   = 0; // 0: N/A; 1: 下方; 2: 右方; 3: 右下方
+  bool   hover_style_cursor        = false;   // 悬停链刚设置了非默认光标样式
   path   table_scale_path          = path (); // 重绘时实时更新
   SI     table_scale_start_x       = 0;
   SI     table_scale_start_y       = 0;
@@ -155,11 +158,15 @@ public:
   /* setter and getter for user_active */
   void set_user_active (bool b) { user_active= b; }
   bool get_user_active () { return user_active; }
+  // 输入法 pre-edit（composition）进行中：pre_edit_mark!=0 表示当前有未提交的
+  // 预编辑节点。协作据此跳过该期间的镜像与光标上行（见 edit_collab.cpp）。
+  bool is_pre_editing () override { return pre_edit_mark != 0; }
 
   /* routines for dealing with shrinked coordinates */
   int  get_pixel_size ();
   SI   get_visible_width ();
   SI   get_visible_height ();
+  void invalidate_visible () override;
   SI   get_window_width ();
   SI   get_window_height ();
   SI   get_window_x ();
@@ -182,8 +189,10 @@ public:
   void draw_surround (renderer ren, rectangle r);
   void draw_context (renderer ren, rectangle r);
   void draw_env (renderer ren);
+  void draw_caret (renderer ren, cursor cu, color col, SI dw, SI zpixel);
   void draw_cursor (renderer ren);
   void draw_selection (renderer ren, rectangle r);
+  void draw_remote_cursors (renderer ren, rectangle r);
   void draw_image_resize_handles (renderer ren);
   void draw_table_resize_handles (renderer ren);
   void draw_graphics (renderer ren);
@@ -198,6 +207,7 @@ public:
   int  idle_time (int event_type= ANY_EVENT);
   int  change_time ();
   void update_menus ();
+  void update_menus (int mask);
   int  find_alt_selection_index (range_set alt_sel, SI y, int b, int e);
   void apply_changes ();
   void animate ();
@@ -272,6 +282,11 @@ public:
   bool is_point_in_text_popup (SI x, SI y);
   void update_text_popup ();
   void invalidate_text_popup_cache (); // 重置工具栏缓存
+
+  void show_ghost_popup ();
+  void hide_ghost_popup ();
+  void show_diff_popup ();
+  void hide_diff_popup ();
 
   /* the footer */
   tree get_shortcut_suffix (string cmd_s);

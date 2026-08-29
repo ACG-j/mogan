@@ -11,7 +11,8 @@
 
 #include "font.hpp"
 #include "Freetype/tt_file.hpp"
-#include "colors.hpp"
+#include <moebius/data/colors.hpp>
+using namespace moebius::data;
 #include "convert.hpp"
 #include "cork.hpp"
 #include "dictionary.hpp"
@@ -548,6 +549,12 @@ bool
 use_poor_rubber (font fn) {
   return has_poor_rubber && fn->type == FONT_TYPE_UNICODE &&
          !starts (fn->res_name, "stix-");
+}
+
+font
+font_rep::get_subfont (string s) {
+  (void) s;
+  return font (this);
 }
 
 font

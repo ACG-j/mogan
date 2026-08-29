@@ -584,11 +584,15 @@
          ) ;cond
         ) ;
         ((string? x) x)
-        ((and (pair? x) (ahash-ref gui-make-table (car x)))
-         (apply (car (ahash-ref gui-make-table (car x))) (list x))
-        ) ;
-        ((and (pair? x) (or (string? (car x)) (pair? (car x))))
-         `($> ,(gui-make (car x)) ,@(cdr x))
+        ((pair? x)
+         (with entry
+           (ahash-ref gui-make-table (car x))
+           (cond (entry (apply (car entry) (list x)))
+                 ((or (string? (car x)) (pair? (car x))) `($> ,(gui-make (car x))
+                                                            ,@(cdr x)))
+                 (else (texmacs-error "gui-make" "invalid menu item ~S" x))
+           ) ;cond
+         ) ;with
         ) ;
         (else (texmacs-error "gui-make" "invalid menu item ~S" x))
   ) ;cond
@@ -692,49 +696,16 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (standard-color-list)
-  '("dark red"
-    "dark magenta"
-    "dark blue"
-    "dark cyan"
-    "dark green"
-    "dark yellow"
-    "dark orange"
-    "dark brown"
-    "red"
-    "magenta"
-    "blue"
-    "cyan"
-    "green"
-    "yellow"
-    "orange"
-    "brown"
-    "#faa"
-    "#faf"
-    "#aaf"
-    "#aff"
-    "#afa"
-    "#ffa"
-    "#fa6"
-    "#a66"
-    "pastel red"
-    "pastel magenta"
-    "pastel blue"
-    "pastel cyan"
-    "pastel green"
-    "pastel yellow"
-    "pastel orange"
-    "pastel brown")
+  '("dark red" "dark magenta" "dark blue" "dark cyan" "dark green" "dark yellow"
+    "dark orange" "dark brown" "red" "magenta" "blue" "cyan" "green" "yellow"
+    "orange" "brown" "#faa" "#faf" "#aaf" "#aff" "#afa" "#ffa" "#fa6" "#a66"
+    "pastel red" "pastel magenta" "pastel blue" "pastel cyan" "pastel green"
+    "pastel yellow" "pastel orange" "pastel brown")
 ) ;define
 
 (define (standard-grey-list)
-  '("black"
-    "darker grey"
-    "dark grey"
-    "#a0a0a0"
-    "light grey"
-    "pastel grey"
-    "#f0f0f0"
-    "white")
+  '("black" "darker grey" "dark grey" "#a0a0a0" "light grey" "pastel grey"
+    "#f0f0f0" "white")
 ) ;define
 
 (tm-menu (standard-color-menu cmd)

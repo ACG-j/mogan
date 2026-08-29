@@ -29,6 +29,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QStyleOption>
 #include <QTimer>
@@ -239,7 +240,8 @@ QTMHomePage::QTMHomePage (QWidget* parent) : QWidget (parent) {
       refreshTemplateCards ();
     }
     else if (!mgr->isInitialized ()) {
-      QTimer::singleShot (0, [mgr] () { mgr->initialize (); });
+      // mgr 作 receiver：QObject 析构时 Qt 自动断开定时器，避免悬挂
+      QTimer::singleShot (0, mgr, [mgr] () { mgr->initialize (); });
     }
   }
 }
@@ -409,6 +411,14 @@ getRecentDocPathsFromScheme () {
   return paths;
 }
 
+// 协作（云端）文档以 tmfs://collab/<doc_id> 为 path：非磁盘文件，QFile::exists
+// 必假， 故 exists 过滤/点击存在性检查需据此放行；点击时分派到
+// startup-tab-open-recent（join）。
+static bool
+isCollabPath (const QString& path) {
+  return path.startsWith (QStringLiteral ("tmfs://collab/"));
+}
+
 static QDateTime
 readRecentOpenedAt (const QJsonObject& docObj, bool hasFilesField) {
   if (hasFilesField) {
@@ -431,6 +441,7 @@ populateRecentDocsFromPaths (QList<RecentDoc>&  recentDocs,
     recentDoc.filePath= path;
     recentDoc.fileName= QFileInfo (path).fileName ();
     recentDoc.openedAt= QDateTime::currentDateTime ();
+    recentDoc.isCloud = isCollabPath (path);
     recentDocs.append (recentDoc);
     if (recentDocs.size () >= MAX_RECENT_DOCS) break;
   }
@@ -449,7 +460,8 @@ QTMHomePage::loadRecentDocs () {
 
   QStringList existingPaths;
   for (const QString& path : recentPaths) {
-    if (QFile::exists (path)) {
+    // 云文档 path 非磁盘文件，exists 必假；放行由 isCollabPath 判定。
+    if (QFile::exists (path) || isCollabPath (path)) {
       existingPaths.append (path);
     }
   }
@@ -488,6 +500,7 @@ QTMHomePage::loadRecentDocs () {
 
     RecentDoc recentDoc;
     recentDoc.filePath= path;
+    recentDoc.isCloud = isCollabPath (path);
     if (recentByPath.contains (path)) {
       const QJsonObject& docObj= recentByPath[path];
       recentDoc.fileName       = docObj["name"].toString ();
@@ -610,6 +623,21 @@ QTMHomePage::renderRecentDocs () {
     nameFont.setBold (true);
     nameLabel->setFont (nameFont);
 
+    // 云文档名后追加「云端」小标签（objectName 供主题 CSS
+    // 定制，内联样式作兜底）。
+    QLabel* cloudLabel= nullptr;
+    if (doc.isCloud) {
+      cloudLabel= new QLabel (QStringLiteral ("云端"), rowWidget);
+      cloudLabel->setObjectName ("startup-tab-cloud-badge");
+      DpiUtils::applyScaledFont (cloudLabel, kRecentTimeFontPx);
+      cloudLabel->setAlignment (Qt::AlignCenter);
+      cloudLabel->setStyleSheet (
+          QString ("background-color: #e8eef7; color: #3a6ea5;"
+                   " border-radius: %1px; padding: 1px %2px;")
+              .arg (DpiUtils::scaled (3))
+              .arg (DpiUtils::scaled (4)));
+    }
+
     auto* timeLabel= new QLabel (qt_translate ("Last opened") + ": " +
                                      doc.openedAt.toString ("yyyy-MM-dd hh:mm"),
                                  rowWidget);
@@ -617,7 +645,11 @@ QTMHomePage::renderRecentDocs () {
     DpiUtils::applyScaledFont (timeLabel, kRecentTimeFontPx);
     timeLabel->setAlignment (Qt::AlignRight | Qt::AlignVCenter);
 
-    rowLayout->addWidget (nameLabel, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    // 标题与「云端」标签按内容宽度依次排列，弹性空间留给中间 stretch，
+    // 使标签紧跟标题而非被顶到行尾
+    rowLayout->addWidget (nameLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    if (cloudLabel) rowLayout->addWidget (cloudLabel, 0, Qt::AlignVCenter);
+    rowLayout->addStretch (1);
     rowLayout->addWidget (timeLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
     recentList_->setItemWidget (item, rowWidget);
   }
@@ -703,6 +735,15 @@ QTMHomePage::onRecentDocClicked (QListWidgetItem* item) {
   QString path= item->data (Qt::UserRole).toString ();
   if (path.isEmpty ()) return;
 
+  // 云文档按 doc_id 重新 join（分派在 scheme 侧
+  // startup-tab-open-recent）；不查本地 exists、不调 addRecentDoc（其 name
+  // 推导对云 URL 会退化为 UUID；重加由 join 的 记录钩子带正确 name 完成）。
+  if (isCollabPath (path)) {
+    eval_scheme ("(startup-tab-open-recent " * qt_scheme_quote_utf8 (path) *
+                 ")");
+    return;
+  }
+
   if (!QFile::exists (path)) {
     QtFloatingToast::showToast (
         recentList_, qt_translate ("File not found, removed from recent list"),
@@ -746,7 +787,18 @@ QTMHomePage::createDocumentWithStyle (const QString& styleId) {
 
   if (styleId == "open") {
     if (!recentDocs_.isEmpty ()) {
-      QString dir= QFileInfo (recentDocs_.first ().filePath).absolutePath ();
+      QString filePath             = recentDocs_.first ().filePath;
+      QString dir                  = QFileInfo (filePath).absolutePath ();
+      bool    isTemporaryPreviewDir= filePath.contains (".lolly");
+      if (isTemporaryPreviewDir) {
+        dir= QStandardPaths::writableLocation (
+            QStandardPaths::DocumentsLocation);
+        if (dir.isEmpty ()) {
+          dir= QStandardPaths::writableLocation (QStandardPaths::HomeLocation);
+        }
+        dir= QDir (dir).filePath ("LiiiSTEM");
+        if (!QDir (dir).exists ()) QDir ().mkpath (dir);
+      }
       eval_scheme (
           "(choose-file load-buffer \"Load file\" \"action_open\" \"\" "
           "(system->url " *

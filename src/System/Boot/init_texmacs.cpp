@@ -12,8 +12,10 @@
 #include "analyze.hpp"
 #include "boot.hpp"
 #include "convert.hpp"
+#include "data_cache.hpp"
 #include "editor.hpp"
 #include "file.hpp"
+#include "font.hpp"
 #include "language.hpp"
 #include "merge_sort.hpp"
 #include "moebius/tree_label.hpp"
@@ -23,8 +25,10 @@
 #include "preferences.hpp"
 #include "server.hpp"
 #include "sys_utils.hpp"
+#include "telemetry.hpp"
 #include "tm_file.hpp"
 #include "tm_link.hpp"
+#include "tm_timer.hpp"
 
 #include <functional>
 #include <signal.h>
@@ -66,9 +70,12 @@ extern int    geometry_x, geometry_y;
 extern url    tm_init_file;
 extern url    tm_init_buffer_file;
 extern string my_init_cmds;
-extern bool   char_clip;
-extern bool   texmacs_started;
-extern bool   headless_mode;
+#ifdef QTTEXMACS
+// char_clip defined in qt_gui.cpp
+extern bool char_clip;
+#endif
+extern bool texmacs_started;
+extern bool headless_mode;
 
 #ifdef QTTEXMACS
 bool        g_startup_login_requested= false;
@@ -87,6 +94,56 @@ bool show_startup_login_dialog ();
 #endif
 
 void server_start ();
+
+#ifdef QTTEXMACS
+// qt_gui.cpp：注册启动开窗钩子（事件循环起跑后首个事件触发）
+void gui_set_boot_open_hook (std::function<void ()> f);
+#endif
+
+/**
+ * @brief 启动时创建主窗口并打开命令行传入的文件
+ * @note  Qt 后端下延迟到事件循环起跑后执行，避免阻塞事件循环启动
+ */
+static void
+texmacs_boot_open (int argc, char** argv) {
+  cache_validate_font_dirs ();
+  init_tex ();
+  font_database_load ();
+  ensure_window ();
+  // 与原流程保持一致：隐藏包扫描在开窗之后执行
+  ensure_hidden_package_set ();
+  bool first_file= true;
+  for (int i= 1; i < argc; i++) {
+    if (argv[i] == NULL) break;
+    string s= argv[i];
+    if ((N (s) >= 2) && (s (0, 2) == "--")) s= s (1, N (s));
+    if ((s[0] != '-') && (s[0] != '+')) {
+      if (DEBUG_STD) debug_std << "Loading " << s << "...\n";
+      url u= url_system (s);
+      if (!is_rooted (u)) u= resolve (url_pwd (), "") * u;
+      string b= scm_quote (as_string (u));
+      string cmd;
+      // only open window once
+      if (first_file) {
+        buffer_load (u);
+        new_buffer_in_this_window (u, tree (moebius::DOCUMENT));
+        eval_scheme ("(buffer-notify-recent " * b * ")");
+        first_file= false;
+      }
+      else {
+        cmd= "(switch-to-buffer " * b * ")";
+        exec_delayed (scheme_cmd (cmd));
+      }
+    }
+    if ((s == "-c") || (s == "-convert")) i+= 2;
+    else if ((s == "-b") || (s == "-initialize-buffer") || (s == "-fn") ||
+             (s == "-font") || (s == "-i") || (s == "-initialize") ||
+             (s == "-g") || (s == "-geometry") || (s == "-x") ||
+             (s == "-execute") || (s == "-log-file")) {
+      i++;
+    }
+  }
+}
 
 /******************************************************************************
  * Clean exit on fatal signals
@@ -178,10 +235,12 @@ init_texmacs_path (int& argc, char** argv) {
   // so just allow everything that is reachable.
 
   // plugins need to be installed in TeXmacs.app/Contents/Plugins
+#ifdef QTTEXMACS
   QCoreApplication::addLibraryPath (QDir::cleanPath (
       QCoreApplication::applicationDirPath ().append ("/../Plugins")));
   // cout << from_qstring ( QCoreApplication::libraryPaths () .join("\n") ) <<
   // LF;
+#endif
   {
     // ensure that private versions of the Qt frameworks have priority on
     // other instances.
@@ -210,14 +269,16 @@ init_texmacs_path (int& argc, char** argv) {
 
 #if defined(OS_MINGW) || defined(OS_WIN)
   // Win bundle environment initialization
-  // TEXMACS_PATH is set by assuming that the executable is in TeXmacs/bin/
-  // Always trust the bundled resource path instead of any inherited
-  // TEXMACS_PATH from the user's environment.
+  // TEXMACS_PATH 优先取 exe 所在目录（Velopack 扁平布局：exe 与
+  // progs/doc/fonts 等数据同根），否则取 exe 的父目录（NSIS 布局：
+  // exe 位于 bin/，数据在父目录）。永远信任捆绑的资源路径，而非用户
+  // 环境里继承的 TEXMACS_PATH。
   // HOME is set to USERPROFILE
   // PWD is set to HOME
   // if PWD is lacking, then the path resolution machinery may not work
 
-  builtin_texmacs_path= as_string (exedir * "..");
+  if (exists (exedir * "progs")) builtin_texmacs_path= as_string (exedir);
+  else builtin_texmacs_path= as_string (exedir * "..");
   set_env ("TEXMACS_PATH", builtin_texmacs_path);
   // if (get_env ("HOME") == "") //now set in immediate_options otherwise
   // --setup option fails
@@ -278,20 +339,6 @@ plugin_path (string which) {
   url base  = url_unix ("$TEXMACS_HOME_PATH:$TEXMACS_PATH");
   url search= base * "plugins" * url_wildcard ("*") * which;
   return expand (complete (search, "r"));
-}
-
-scheme_tree
-plugin_list () {
-  bool          flag;
-  array<string> a= read_directory ("$TEXMACS_PATH/plugins", flag);
-  a << read_directory ("$TEXMACS_HOME_PATH/plugins", flag);
-  merge_sort (a);
-  int  i, n= N (a);
-  tree t (TUPLE);
-  for (i= 0; i < n; i++)
-    if ((a[i] != ".") && (a[i] != "..") && ((i == 0) || (a[i] != a[i - 1])))
-      t << a[i];
-  return t;
 }
 
 /******************************************************************************
@@ -575,9 +622,11 @@ init_texmacs_front () {
 
 void
 init_texmacs () {
+#ifdef QTTEXMACS
   if (g_startup_login_executed == true) {
     return;
   }
+#endif
 
   // cout << "Initialize -- Boot lock\n";
   acquire_boot_lock ();
@@ -588,16 +637,8 @@ init_texmacs () {
   // cout << "Initialize -- User preferences\n";
   load_user_preferences ();
 
-  // cout << "Initialize -- font_database_load\n";
-  font_database_load ();
-  // cout << "Initialize -- font_database_load end\n";
-}
-
-void
-load_welcome_doc () {
-  if (DEBUG_STD) debug_boot << "Loading welcome message...\n";
-  string cmd= "(mogan-welcome)";
-  exec_delayed (scheme_cmd (cmd));
+  // font_database_load 推迟到 texmacs_boot_open：首个 buffer 排版才需要
+  // 字体数据库（fonts_loaded 守卫保证其他入口仍可按需加载）
 }
 
 /******************************************************************************
@@ -628,7 +669,8 @@ load_settings_and_check_version () {
 void
 init_plugins () {
   setup_tex ();
-  init_tex ();
+  // init_tex（tfm/pk/pfb 路径递归扫描）推迟到 texmacs_boot_open，
+  // 首个 buffer 排版前才需要这些路径
 }
 
 void
@@ -794,28 +836,15 @@ TeXmacs_main (int argc, char** argv) {
       }
       else if (s == "-server") start_server_flag= true;
       else if (s == "-log-file") i++;
+#ifdef QTTEXMACS
       else if ((s == "-Oc") || (s == "-no-char-clipping")) char_clip= false;
       else if ((s == "+Oc") || (s == "-char-clipping")) char_clip= true;
+#endif
       else if ((s == "-S") || (s == "-setup") || (s == "-delete-cache") ||
                (s == "-delete-font-cache") || (s == "-delete-style-cache") ||
                (s == "-delete-file-cache") || (s == "-delete-doc-cache") ||
                (s == "-delete-plugin-cache") || (s == "-headless"))
         ;
-      else if (s == "-build-manual") {
-        if ((++i) < argc)
-          extra_init_cmd << "(build-manual " << scm_quote (argv[i])
-                         << " delayed-quit)";
-      }
-      else if (s == "-reference-suite") {
-        if ((++i) < argc)
-          extra_init_cmd << "(build-ref-suite " << scm_quote (argv[i])
-                         << " delayed-quit)";
-      }
-      else if (s == "-test-suite") {
-        if ((++i) < argc)
-          extra_init_cmd << "(run-test-suite " << scm_quote (argv[i])
-                         << "delayed-quit)";
-      }
       else if (starts (s, "-psn"))
         ;
       else {
@@ -886,63 +915,43 @@ TeXmacs_main (int argc, char** argv) {
   if (!use_native_menubar) use_unified_toolbar= false;
   // End user preferences
 
-  if (DEBUG_STD) debug_boot << "Installing internal plug-ins...\n";
+  if (DEBUG_STD) debug_std << "Installing internal plug-ins...\n";
   bench_start ("initialize plugins");
   bench_cumul ("initialize plugins");
-  if (DEBUG_STD) debug_boot << "Opening display...\n";
+  if (DEBUG_STD) debug_std << "Opening display...\n";
 
   gui_open (argc, argv);
   set_default_font (the_default_font);
-  if (DEBUG_STD) debug_boot << "Starting server...\n";
+  if (DEBUG_STD) debug_std << "Starting server...\n";
   { // opening scope for server sv
+#ifdef QTTEXMACS
     server sv (app_type::RESEARCH);
-    string where     = "";
-    bool   first_file= true;
-
-    if (install_status == 1) load_welcome_doc ();
-
-    ensure_window ();
-
-    for (i= 1; i < argc; i++) {
-      if (argv[i] == NULL) break;
-      string s= argv[i];
-      if ((N (s) >= 2) && (s (0, 2) == "--")) s= s (1, N (s));
-      if ((s[0] != '-') && (s[0] != '+')) {
-        if (DEBUG_STD) debug_boot << "Loading " << s << "...\n";
-        url u= url_system (s);
-        if (!is_rooted (u)) u= resolve (url_pwd (), "") * u;
-        string b= scm_quote (as_string (u));
-        string cmd;
-        // only open window once
-        if (first_file) {
-          buffer_load (u);
-          new_buffer_in_this_window (u, tree (moebius::DOCUMENT));
-          eval_scheme ("(buffer-notify-recent " * b * ")");
-          first_file= false;
-        }
-        else {
-          cmd= "(switch-to-buffer " * b * ")";
-          exec_delayed (scheme_cmd (cmd));
-        }
-      }
-      if ((s == "-c") || (s == "-convert")) i+= 2;
-      else if ((s == "-b") || (s == "-initialize-buffer") || (s == "-fn") ||
-               (s == "-font") || (s == "-i") || (s == "-initialize") ||
-               (s == "-g") || (s == "-geometry") || (s == "-x") ||
-               (s == "-execute") || (s == "-log-file") ||
-               (s == "-build-manual") || (s == "-reference-suite") ||
-               (s == "-test-suite")) {
-        i++;
-      }
-    }
+#else
+    // TODO: need Sanitäter :(
+    // 目前非 QTTEXMACS sv 正常析构函数会重复释放
+    // 暂且延长生命周期到程序结束
+    (void) new server (app_type::RESEARCH);
+#endif
+#ifdef QTTEXMACS
+    // Qt 后端：开窗与首文件加载延后到事件循环起跑后的第一个事件执行，
+    // 避免会话恢复/首个 buffer 排版阻塞事件循环启动
+    gui_set_boot_open_hook (
+        [argc, argv] () { texmacs_boot_open (argc, argv); });
+#else
+    texmacs_boot_open (argc, argv);
+#endif
 
     if (DEBUG_BENCH) lolly::system::bench_print (std_bench);
     bench_reset ("initialize texmacs");
     bench_reset ("initialize plugins");
     bench_reset ("initialize scheme");
 
-    if (DEBUG_STD) debug_boot << "Starting event loop...\n";
+    if (DEBUG_STD)
+      debug_std << "Starting event loop... (" << texmacs_time () << " ms)\n";
     texmacs_started= true;
+    // 事件循环起跑后再上报 OPEN，避免 track 同步写 jsonl 及
+    // plugin-feed 拉起 telemetry 插件阻塞首帧（原先在启动页 showEvent 触发）
+    telemetry_track ("OPEN");
     if (!disable_error_recovery) {
       // 注册信号处理器，确保子进程被正确清理
       // 包括崩溃类信号和用户中断信号
@@ -969,16 +978,36 @@ TeXmacs_main (int argc, char** argv) {
 #endif
 
     if (N (extra_init_cmd) > 0) exec_delayed (scheme_cmd (extra_init_cmd));
+#ifndef QTTEXMACS
     ensure_hidden_package_set ();
+    // Qt 后端会在构建主菜单时顺带强制加载已发现的插件
+    // （tm_window_rep::menu_main → "(lazy-initialize-force)"）。
+    //
+    // ImGui 后端不构建菜单，因此这一触发点不会执行，导致
+    // init-research.scm 中登记的插件始终保持 lazy 状态，未被加载。
+    //
+    // 因此这里暂时在启动之后手动加载插件
+    eval ("(plugin-initialize 'latex)");
+    eval ("(plugin-initialize 'data)");
+    // eval ("(plugin-initialize 'goldfish)");
+    eval ("(plugin-initialize 'image)");
+    // eval ("(plugin-initialize 'json)");
+    // eval ("(plugin-initialize 'julia)");
+    // eval ("(plugin-initialize 'llm)");
+    // eval ("(plugin-initialize 'maxima)");
+    // eval ("(plugin-initialize 'quiver)");
+    // eval ("(plugin-initialize 'python)");
+    // eval ("(plugin-initialize 'tikz)");
+#endif
     gui_start_loop ();
 
-    if (DEBUG_STD) debug_boot << "Stopping server...\n";
+    if (DEBUG_STD) debug_std << "Stopping server...\n";
   } // ending scope for server sv
 
-  if (DEBUG_STD) debug_boot << "Closing display...\n";
+  if (DEBUG_STD) debug_std << "Closing display...\n";
   gui_close ();
 
-  if (DEBUG_STD) debug_boot << "Good bye...\n";
+  if (DEBUG_STD) debug_std << "Good bye...\n";
 }
 
 #ifdef QTTEXMACS
@@ -995,7 +1024,9 @@ perform_startup_login_request () {
   tm_server_rep* server=
       dynamic_cast<tm_server_rep*> (get_server ().operator->());
   if (server && server->getAccount ()) {
-    QTimer::singleShot (0, [server] () { server->getAccount ()->login (); });
+    // account 作 receiver：QObject 析构时 Qt 自动断开定时器，避免悬挂
+    QTMOAuth* account= server->getAccount ();
+    QTimer::singleShot (0, account, [account] () { account->login (); });
     g_startup_login_requested= false;
     return;
   }

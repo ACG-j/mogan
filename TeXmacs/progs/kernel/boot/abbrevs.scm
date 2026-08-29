@@ -183,7 +183,7 @@
 ;; Small rewritings on top of C++ interface
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define-public (path->tree p) (and (path-exists? p) (cpp-path->tree p)))
+(define-public (path->tree p) (and (stem-path-exists? p) (cpp-path->tree p)))
 
 (define-public selection-active? selection-active-any?)
 
@@ -228,10 +228,25 @@
                      ) ;and
            ) ;last-dir
           ) ;
-      (if (and last-dir (string? last-dir) (not (string-null? last-dir)))
-        (set! opts (list (car opts) (system->url last-dir)))
-        (set! opts (list (car opts) master))
-      ) ;if
+      (cond ((and last-dir (string? last-dir) (not (string-null? last-dir)))
+             (set! opts (list (car opts) (system->url last-dir)))
+            ) ;
+            ((url-scratch? master)
+             ;; 草稿另存默认目录:LiiiSTEM,而非 no_name 暂存目录
+             (set! opts (list (car opts) (url-append (get-documents-path) "LiiiSTEM")))
+            ) ;
+            ((url-rooted-tmfs? master)
+             ;; tmfs buffer（协作云文档等）master 是 tmfs URL，非本地路径；
+             ;; 默认落到系统下载目录，buffer 标题作默认文件名
+             ;; （propose-name-buffer 已转 UTF-8）；裸文件名会退化为 cwd
+             (set! opts
+               (list (car opts)
+                 (url-append (get-downloads-path) (system->url (propose-name-buffer)))
+               ) ;list
+             ) ;set!
+            ) ;
+            (else (set! opts (list (car opts) master)))
+      ) ;cond
     ) ;let*
   ) ;when
   (cpp-choose-file (lambda (u)
@@ -259,10 +274,3 @@
 ) ;define-public
 
 (define-public (alt-windows-delete l) (for-each alt-window-delete l))
-
-(define-public (qt4-gui?) (== (gui-version) "qt4"))
-(define-public (qt4-or-later-gui?) (in? (gui-version) (list "qt4" "qt5" "qt6")))
-(define-public (qt5-gui?) (== (gui-version) "qt5"))
-(define-public (qt5-or-later-gui?) (in? (gui-version) (list "qt5" "qt6")))
-(define-public (qt6-gui?) (== (gui-version) "qt6"))
-(define-public (qt6-or-later-gui?) (in? (gui-version) (list "qt6")))

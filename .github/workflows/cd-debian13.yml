@@ -43,7 +43,7 @@ jobs:
 
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: v2.9.6
+          xmake-version: v3.0.7
 
       - name: Update Xrepo
         run: xrepo update-repo
@@ -66,10 +66,6 @@ jobs:
             libdbus-1-3 libglib2.0-0t64 libegl1 libgl-dev libxkbcommon0 \
             fonts-noto-cjk \
             ghostscript \
-            qt6-base-dev \
-            libqt6svg6-dev \
-            libqt6networkauth6-dev \
-            qt6-base-private-dev \
             fakeroot \
             debhelper \
             file \
@@ -81,7 +77,7 @@ jobs:
       # 3. 编译流程
       # ==========================================
       - name: Config
-        run: xmake config --yes -vD -m release --policies=build.ccache
+        run: xmake config --loro=yes --yes -vD -m release --policies=build.ccache
 
       - name: Build
         run: xmake build -vD stem

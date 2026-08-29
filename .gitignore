@@ -10,6 +10,11 @@ build
 *.py[cod]
 *$py.class
 __pycache__/
+3rdparty/loro/target
+3rdparty/mogan-loro-ffi/target
+# curl 源码包构建产物(目录名带构建哈希)与构建期改写的 CMakeLists
+3rdparty/curl-*/build-*/
+3rdparty/curl-*/CMakeLists.txt
 
 # editor files
 *.sln
@@ -46,6 +51,9 @@ docs/**/plugin_binary.md
 
 # Binary of the goldfish plugin
 TeXmacs/plugins/goldfish/bin/goldfish
+TeXmacs/plugins/goldfish/bin/*.wasm
+TeXmacs/plugins/goldfish/bin/*.js
+TeXmacs/plugins/goldfish/bin/*.html
 goldfish.dSYM/
 *.sym
 *goldfish.pdb
@@ -56,3 +64,16 @@ TeXmacs/fonts/opentype/noto
 record
 
 moganstem.sh
+
+# ImGui
+imgui.ini
+
+# node
+tools/loro-relay/node_modules/
+tools/loro-server/node_modules/
+tools/loro-server/data/
+# 协作服务端从仓库根运行时产生的测试数据
+/data/
+
+# Reasonix
+reasonix.toml

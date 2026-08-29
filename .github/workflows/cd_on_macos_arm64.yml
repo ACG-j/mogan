@@ -23,14 +23,14 @@ jobs:
           fetch-depth: 1
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: v2.9.3
+          xmake-version: v3.0.4
           actions-cache-folder: '.xmake-cache'
       - name: xmake repo --update
         run: xmake repo --update
       - name: Config and build goldfish
         run: |
-          xmake config -m release -a ${{ matrix.arch }} -vD --yes
-          xmake build goldfish
+          xmake config -m release -a ${{ matrix.arch }} -vD --loro=yes --yes
+          xmake build goldfish-bin
           ls -la TeXmacs/plugins/goldfish/bin/ || echo "goldfish bin dir not found"
       - name: Package with Goldfish
         env:

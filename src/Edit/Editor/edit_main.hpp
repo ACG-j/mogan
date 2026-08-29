@@ -65,6 +65,7 @@ public:
   string get_metadata (string kind);
   int    nr_pages ();
   void   print_doc (url ps_name, bool to_file, int first, int last);
+  void   render_to_images (url dest, double zoomf);
   void   print_to_file (url ps_name, string first= "1", string last= "1000000");
   void   print_buffer (string first= "1", string last= "1000000");
   void   export_ps (url ps_name, string first= "1", string last= "1000000");
@@ -88,6 +89,14 @@ public:
   void show_selection ();
   void show_meminfo ();
   void edit_special ();
+
+#ifdef LORO_ENABLED
+  // edit_main_rep 同时持有 edit_modify_rep 的 loro_doc 与 edit_typeset_rep 的
+  // style/init getter/setter，故 meta section 的同步逻辑集中在此实现。
+  void apply_remote_meta () override;
+  void loro_seed_local_meta () override;
+  void mirror_meta_if_active (string section) override;
+#endif
 
   friend class editor;
 };

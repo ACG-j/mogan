@@ -16,7 +16,7 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDockWidget>
-#include <QFontMetrics>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -29,6 +29,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QObject>
+#include <QPointer>
 #include <QPushButton>
 #include <QResource>
 #include <QStatusBar>
@@ -41,14 +42,17 @@
 #include "config.h"
 #include "scheme.hpp"
 
+#include "dictionary.hpp"
 #include "qt_chat_controller.hpp"
 #include "qt_gui.hpp"
+#include "qt_pdf_outline_widget.hpp" // OutlineWidget 定义在此
 #include "qt_pdf_reader_widget.hpp"
 #include "qt_pdf_toolbar.hpp"
 #include "qt_picture.hpp"
 #include "qt_renderer.hpp"
 #include "qt_tm_widget.hpp"
 #include "qt_utilities.hpp"
+#include "tm_debug.hpp"
 
 bool in_presentation_mode ();
 
@@ -78,6 +82,20 @@ bool in_presentation_mode ();
 #include <moebius/data/scheme.hpp>
 
 using moebius::data::scm_quote;
+
+namespace {
+/** @brief 仅用于消 warning 的占位 widget，本身无任何视觉/行为作用。
+ *
+ *  QDockWidget::setTitleBarWidget(new QWidget) 可禁用标题栏，但空 QWidget
+ *  的 minimumSizeHint() 默认返回 (-1,-1)，会被 QMainWindowLayout 当成 dock
+ *  最小尺寸约束，从而触发 setMinimumSize 负尺寸警告。这里仅 override 两个
+ *  hint 返回 (0,0) 提供有效约束，渲染效果与空 QWidget 完全一致。 */
+class EmptyTitleBar : public QWidget {
+public:
+  QSize sizeHint () const override { return QSize (0, 0); }
+  QSize minimumSizeHint () const override { return QSize (0, 0); }
+};
+} // namespace
 
 int menu_count= 0; // zero if no menu is currently being displayed
 list<qt_tm_widget_rep*> waiting_widgets;
@@ -207,17 +225,19 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     : qt_window_widget_rep (new QTMWindow (0), "popup", _quit), helper (this),
       prompt (NULL), full_screen (false), is_presentation (false),
       menuToolBarVisibleCache (false), titleBarVisibleCache (false),
-      scmNotificationBar (nullptr), loginButton (nullptr), vipButton (nullptr),
-      m_loginDialog (nullptr), avatarLabel (nullptr), nameLabel (nullptr),
-      accountIdLabel (nullptr), membershipPeriodLabel (nullptr),
-      membershipTitleLabel (nullptr), loginActionButton (nullptr),
-      logoutButton (nullptr), m_userId (""), m_memberType (""),
+      scmNotificationBar (nullptr), loginButton (nullptr),
+      inviteButton (nullptr), m_loginDialog (nullptr), avatarLabel (nullptr),
+      nameLabel (nullptr), accountIdLabel (nullptr),
+      membershipPeriodLabel (nullptr), membershipTitleLabel (nullptr),
+      loginActionButton (nullptr), logoutButton (nullptr), m_userId (""),
       m_currentScmNotificationItem (""), startupContentWidget (nullptr),
-      startupTabMode (false), pdfViewerWidget (nullptr), pdfTabMode (false),
-      currentPdfPath (""), lastLoadedPdfPath (""), chatContentWidget (nullptr),
-      chatTabMode (false), chatSideDock (nullptr),
+      startupTabMode (false), startupChromePending_ (false),
+      pdfViewerWidget (nullptr), pdfTabMode (false), currentPdfPath (""),
+      lastLoadedPdfPath (""), chatContentWidget (nullptr), chatTabMode (false),
+      chatSideDock (nullptr), pdfOutlineDock (nullptr),
       chatSidebarToggleBtn (nullptr), chatSidebarMode (false),
-      chatSidebarModeMemory_ (false), centralWidgetUpdatesFrozen_ (false) {
+      chatSidebarModeMemory_ (false), centralWidgetUpdatesFrozen_ (false),
+      centralUnfreezeGeneration_ (0) {
   type= texmacs_widget;
 
   main_widget= concrete (::glue_widget (true, true, 1, 1));
@@ -416,11 +436,12 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     windowAgent->setHitTestVisible (loginButton, true);
   }
 
+  loginButton->setText (QString ());
+  loginButton->setToolTip (qt_translate ("User Center"));
+  loginButton->setAccessibleName (qt_translate ("User Center"));
+
   if (is_community_stem ()) {
-    // 社区版：点击直接跳转官网，无状态变化，不显示文字
-    loginButton->setText (QString ());
-    loginButton->setToolTip (qt_translate ("User Center"));
-    loginButton->setAccessibleName (qt_translate ("User Center"));
+    // 社区版：点击直接跳转官网，无登录态
     QObject::connect (loginButton, &QWK::LoginButton::clicked, [this] () {
       string pricingUrl=
           as_string (call ("account-oauth2-config", "click-return-liii-url"));
@@ -428,58 +449,46 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     });
   }
   else {
-    // 商业版：完整登录功能
-    updateLoginButtonState (false);
-
-    m_loginDialog= new QWK::LoginDialog (mainwindow ());
-    setupLoginDialog (m_loginDialog);
+    // 商业版：完整登录功能。LoginDialog 创建耗时 ~100ms，首屏不需要，
+    // 惰性到首次使用（ensureLoginDialog）时再创建
     QObject::connect (loginButton, &QWK::LoginButton::clicked,
                       [this] () { checkLocalTokenAndLogin (); });
   }
 
-  // VIP升级会员按钮 - 放在登录按钮左侧（只在商业版显示）
-  vipButton= new QPushButton (windowBar);
-  vipButton->setObjectName ("vip-button");
-  vipButton->setText (qt_translate ("Upgrade VIP"));
-  vipButton->setProperty ("system-button", true);
-  vipButton->setFocusPolicy (Qt::NoFocus);
-  vipButton->setSizePolicy (QSizePolicy::Fixed, QSizePolicy::Fixed);
-  vipButton->setFixedSize (vipbuttonWidth, vipbuttonHeight);
-  vipButton->setCursor (Qt::PointingHandCursor);
-  vipButton->setStyleSheet (
-      QString ("QPushButton#vip-button { border-radius: %1px; font-size: %2px; "
-               "margin-right: %3px; }")
+  // 邀请好友按钮 - 放在登录按钮左侧（商业版已登录时显示）
+  inviteButton= new QPushButton (windowBar);
+  inviteButton->setObjectName ("invite-button");
+  inviteButton->setText (qt_translate ("Claim Membership"));
+  inviteButton->setProperty ("system-button", true);
+  inviteButton->setFocusPolicy (Qt::NoFocus);
+  inviteButton->setSizePolicy (QSizePolicy::Fixed, QSizePolicy::Fixed);
+  inviteButton->setFixedSize (vipbuttonWidth, vipbuttonHeight);
+  inviteButton->setCursor (Qt::PointingHandCursor);
+  bool isChinese= (get_output_language () == "chinese");
+  inviteButton->setStyleSheet (
+      QString (
+          "QPushButton#invite-button { border-radius: %1px; font-size: %2px; "
+          "margin-right: %3px; }")
           .arg (DpiUtils::scaled (12))
-          .arg (DpiUtils::scaled (12))
+          .arg (DpiUtils::scaled (isChinese ? 12 : 9))
           .arg (DpiUtils::scaled (4)));
 
-  // 设置闪电图标
-  vipButton->setIcon (QIcon (":/window-bar/vip-lightning.svg"));
-  vipButton->setIconSize (QSize (DpiUtils::scaled (20), DpiUtils::scaled (20)));
-
-  windowBar->setVipButton (vipButton);
+  windowBar->setVipButton (inviteButton);
   if (windowAgent) {
-    windowAgent->setHitTestVisible (vipButton, true);
+    windowAgent->setHitTestVisible (inviteButton, true);
   }
 
-  // 点击事件：跳转到会员购买页面（未登录时先触发登录）
-  QObject::connect (vipButton, &QPushButton::clicked, [this] () {
-    if (is_community_stem ()) {
-      string pricingUrl=
-          as_string (call ("account-oauth2-config", "click-return-liii-url"));
-      QDesktopServices::openUrl (QUrl (to_qstring (pricingUrl)));
-      return;
-    }
-
+  // 点击事件：跳转邀请页面（未登录时先触发登录）
+  QObject::connect (inviteButton, &QPushButton::clicked, [this] () {
     if (is_server_started ()) {
       tm_server_rep* server=
           dynamic_cast<tm_server_rep*> (get_server ().operator->());
       if (server && server->getAccount () &&
           server->getAccount ()->isLoggedIn ()) {
 #if !IS_COMMUNITY
-        telemetry_track ("VIP_CLICK", "'((\"mode\" . \"upgrade\"))");
+        telemetry_track ("INVITE_CLICK", "'((\"mode\" . \"invite\"))");
 #endif
-        openRenewalPage ();
+        openInvitationPage ();
       }
       else {
         checkLocalTokenAndLogin ();
@@ -487,8 +496,27 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
     }
   });
 
-  // 初始设置VIP按钮可见性：商业版且（未登录或普通用户/体验会员）时显示
-  updateVipButtonVisibility (false, QString ());
+  // 初始设置邀请按钮可见性：商业版已登录即显示
+  updateInviteButtonVisibility (false);
+
+  // 窗口尺寸变化时重算邀请按钮显隐（半屏下隐藏）
+  if (mw) {
+    class InviteBtnResizeWatcher : public QObject {
+    public:
+      InviteBtnResizeWatcher (QWidget* parent, qt_tm_widget_rep* w)
+          : QObject (parent), widget_ (w) {}
+      bool eventFilter (QObject* obj, QEvent* event) override {
+        if (event->type () == QEvent::Resize) {
+          widget_->updateInviteButtonVisibility_onResize ();
+        }
+        return QObject::eventFilter (obj, event);
+      }
+
+    private:
+      qt_tm_widget_rep* widget_;
+    };
+    mw->installEventFilter (new InviteBtnResizeWatcher (mw, this));
+  }
 
   // 创建 SCM 通知条容器（放在标题栏下方）
   QWidget*     notificationContainer= new QWidget (mw);
@@ -520,10 +548,22 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
                         call ("notification-bar-snooze-membership-expired");
                       }
                     });
-  if (!is_community_stem ()) checkNetworkAvailable ();
+  // guard 守卫：deleteLater() 异步销毁 QWidget，存在「this 已析构、回调仍
+  // 触发」的窗口；捕获按值的 QPointer 跟踪 QWidget 生命周期（不依赖 this），
+  // 失效即跳过。本文件定时器/网络/信号回调统一此模式，下文不再赘述。
+  QPointer<QWidget> guard (qwid);
+  // 网络检查挪到事件循环，避免构造期创建 QNetworkAccessManager 的同步开销
+  if (!is_community_stem ())
+    QTimer::singleShot (0, [guard, this] () {
+      if (!guard) return;
+      checkNetworkAvailable ();
+    });
 
   // 延迟检查版本更新（启动后10秒）
-  QTimer::singleShot (10000, [this] () { checkVersionUpdate (); });
+  QTimer::singleShot (10000, [guard, this] () {
+    if (!guard) return;
+    checkVersionUpdate ();
+  });
 
   // there is a bug in the early implementation of toolbars in Qt 4.6
   // which has been fixed in 4.6.2 (at least)
@@ -587,7 +627,7 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
   double status_scale=
       (((double) retina_icons) > retina_scale ? 1.5 : retina_scale);
   if (status_scale > 1.0) {
-    int std_h= (os_mingw () ? 28 : 20);
+    int std_h= 20;
     int min_h= (int) floor (std_h * status_scale);
     bar->setMinimumHeight (min_h);
   }
@@ -828,58 +868,71 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
                               "border-left: %1px solid rgba(0,0,0,0.12); }")
                          .arg (borderWidth));
 
-  // AI 聊天侧边栏 Dock
-  chatSideDock= new QDockWidget ("AI Chat Sidebar", mw);
-  chatSideDock->setObjectName ("chatSideDock");
-  chatSideDock->setAllowedAreas (Qt::RightDockWidgetArea);
-  chatSideDock->setFeatures (QDockWidget::DockWidgetClosable);
-  chatSideDock->setFloating (false);
-  chatSideDock->setTitleBarWidget (new QWidget ()); // 禁用标题栏
-  chatSideDock->setMinimumSize (DpiUtils::scaled (320), 0);
-  chatSideDock->setVisible (false);
-  mw->addDockWidget (Qt::RightDockWidgetArea, chatSideDock);
+  // AI 聊天侧边栏 Dock（community 版不创建，保持 nullptr，
+  // 下游所有 if (chatSideDock) 判空即自动跳过）
+  if (!is_community_stem ()) {
+    chatSideDock= new QDockWidget ("AI Chat Sidebar", mw);
+    chatSideDock->setObjectName ("chatSideDock");
+    chatSideDock->setAllowedAreas (Qt::RightDockWidgetArea);
+    chatSideDock->setFeatures (QDockWidget::DockWidgetClosable);
+    chatSideDock->setFloating (false);
+    chatSideDock->setTitleBarWidget (new EmptyTitleBar ()); // 禁用标题栏
+    chatSideDock->setMinimumSize (DpiUtils::scaled (320), 0);
+    chatSideDock->setVisible (false);
+    mw->addDockWidget (Qt::RightDockWidgetArea, chatSideDock);
+  }
 
-  // 文档区域右上角浮动新建对话按钮
-  chatSidebarToggleBtn= new QPushButton (cw);
-  chatSidebarToggleBtn->setObjectName ("chat-tab-collapse-btn");
-  chatSidebarToggleBtn->setFocusPolicy (Qt::NoFocus);
-  chatSidebarToggleBtn->setCursor (Qt::PointingHandCursor);
-  chatSidebarToggleBtn->setIcon (QIcon (":llm-chat/addchat.svg"));
-  chatSidebarToggleBtn->setIconSize (
-      QSize (DpiUtils::scaled (20), DpiUtils::scaled (20)));
-  chatSidebarToggleBtn->setFixedSize (DpiUtils::scaled (40),
-                                      DpiUtils::scaled (40));
-  chatSidebarToggleBtn->setStyleSheet (
-      QString ("QPushButton { border: none; border-radius: %1px; }")
-          .arg (DpiUtils::scaled (20)));
-  chatSidebarToggleBtn->hide ();
+  // PDF 目录（大纲）侧边栏 Dock（PDF 模式显示书签，编辑器模式显示章节结构）
+  {
+    pdfOutlineDock= new OutlineWidget ("目录", mw);
+    pdfOutlineDock->setObjectName ("pdfOutlineDock");
+    pdfOutlineDock->setFloating (false);
+    pdfOutlineDock->setVisible (false);
+    mw->addDockWidget (Qt::LeftDockWidgetArea, pdfOutlineDock);
 
-  // 使用 QObject 辅助类处理 central widget 的 resize 事件以更新按钮位置
-  class ChatSidebarBtnPositioner : public QObject {
-  public:
-    ChatSidebarBtnPositioner (QPushButton* btn, QWidget* parent,
-                              qt_tm_widget_rep* widget)
-        : QObject (parent), button_ (btn), parent_ (parent), widget_ (widget) {}
-    bool eventFilter (QObject* obj, QEvent* event) override {
-      if (obj == parent_ && event->type () == QEvent::Resize) {
-        widget_->position_chat_sidebar_button ();
+    // 文档区域右上角浮动新建对话按钮
+    chatSidebarToggleBtn= new QPushButton (cw);
+    chatSidebarToggleBtn->setObjectName ("chat-tab-collapse-btn");
+    chatSidebarToggleBtn->setFocusPolicy (Qt::NoFocus);
+    chatSidebarToggleBtn->setCursor (Qt::PointingHandCursor);
+    chatSidebarToggleBtn->setIcon (QIcon (":llm-chat/addchat.svg"));
+    chatSidebarToggleBtn->setIconSize (
+        QSize (DpiUtils::scaled (20), DpiUtils::scaled (20)));
+    chatSidebarToggleBtn->setFixedSize (DpiUtils::scaled (40),
+                                        DpiUtils::scaled (40));
+    chatSidebarToggleBtn->setStyleSheet (
+        QString ("QPushButton { border: none; border-radius: %1px; }")
+            .arg (DpiUtils::scaled (20)));
+    chatSidebarToggleBtn->hide ();
+
+    // 使用 QObject 辅助类处理 central widget 的 resize 事件以更新按钮位置
+    class ChatSidebarBtnPositioner : public QObject {
+    public:
+      ChatSidebarBtnPositioner (QPushButton* btn, QWidget* parent,
+                                qt_tm_widget_rep* widget)
+          : QObject (parent), button_ (btn), parent_ (parent),
+            widget_ (widget) {}
+      bool eventFilter (QObject* obj, QEvent* event) override {
+        if (obj == parent_ && event->type () == QEvent::Resize) {
+          widget_->position_chat_sidebar_button ();
+        }
+        return QObject::eventFilter (obj, event);
       }
-      return QObject::eventFilter (obj, event);
-    }
 
-  private:
-    QPushButton*      button_;
-    QWidget*          parent_;
-    qt_tm_widget_rep* widget_;
-  };
-  cw->installEventFilter (
-      new ChatSidebarBtnPositioner (chatSidebarToggleBtn, cw, this));
+    private:
+      QPushButton*      button_;
+      QWidget*          parent_;
+      qt_tm_widget_rep* widget_;
+    };
+    cw->installEventFilter (
+        new ChatSidebarBtnPositioner (chatSidebarToggleBtn, cw, this));
 
-  QObject::connect (chatSidebarToggleBtn, &QPushButton::clicked, [this] () {
-    chatSidebarMode       = !chatSidebarMode;
-    chatSidebarModeMemory_= chatSidebarMode;
-    sync_chat_sidebar_mode ();
-  });
+    QObject::connect (chatSidebarToggleBtn, &QPushButton::clicked, [this] () {
+      chatSidebarMode       = !chatSidebarMode;
+      chatSidebarModeMemory_= chatSidebarMode;
+      sync_chat_sidebar_mode ();
+    });
+  }
 
   // FIXME? add DockWidgetClosable and connect the close signal
   // to the scheme code
@@ -918,25 +971,26 @@ qt_tm_widget_rep::qt_tm_widget_rep (int mask, command _quit)
       QTMOAuth* account= server->getAccount ();
       // 商业版：连接登录状态变化信号
       if (!is_community_stem ()) {
-        QObject::connect (
-            account, &QTMOAuth::loginStateChanged, [this] (bool loggedIn) {
-              updateLoginButtonState (loggedIn,
-                                      loggedIn ? qt_translate ("User Center")
-                                               : QString ());
-              if (loggedIn) {
-                syncScmGuestNotification (false);
-                refreshMembershipInfoInBackground ();
-              }
-              else {
-                syncScmMembershipNotification (false);
-                checkNetworkAvailable ();
-              }
-            });
-        updateLoginButtonState (
-            account->isLoggedIn (),
-            account->isLoggedIn () ? qt_translate ("User Center") : QString ());
+        // account 由 server 单例管理，信号不随 widget 析构断开，故仍需 guard
+        QPointer<QWidget> guard (qwid);
+        QObject::connect (account, &QTMOAuth::loginStateChanged,
+                          [guard, this] (bool loggedIn) {
+                            if (!guard) return;
+                            if (loggedIn) {
+                              syncScmGuestNotification (false);
+                              refreshMembershipInfoInBackground ();
+                            }
+                            else {
+                              syncScmMembershipNotification (false);
+                              checkNetworkAvailable ();
+                            }
+                          });
         if (account->isLoggedIn ()) {
-          refreshMembershipInfoInBackground ();
+          // 首次创建 QNetworkAccessManager 的同步开销挪出构造关键路径
+          QTimer::singleShot (0, [guard, this] () {
+            if (!guard) return;
+            refreshMembershipInfoInBackground ();
+          });
         }
       }
     }
@@ -1048,6 +1102,66 @@ qt_tm_widget_rep::set_central_widget_updates_frozen (bool frozen) {
 }
 
 void
+qt_tm_widget_rep::schedule_central_unfreeze () {
+  centralUnfreezeGeneration_++;
+  poll_central_unfreeze (centralUnfreezeGeneration_,
+                         QDateTime::currentMSecsSinceEpoch ());
+}
+
+void
+qt_tm_widget_rep::poll_central_unfreeze (int generation, qint64 start_ms) {
+  QPointer<QWidget> guard (centralwidget ());
+  QTimer::singleShot (16, guard, [this, guard, generation, start_ms] () {
+    if (!guard) return;
+    if (generation != centralUnfreezeGeneration_) return;
+    if (!centralWidgetUpdatesFrozen_) return;
+
+    bool ready= false;
+    if (!is_nil (main_widget) &&
+        main_widget.rep->type == qt_widget_rep::simple_widget) {
+      qt_simple_widget_rep* sw= concrete_simple_widget (main_widget);
+      if (sw->is_editor_widget () && sw->scrollarea () &&
+          sw->scrollarea ()->surface ()) {
+        QWidget* surface= sw->scrollarea ()->surface ();
+        // 首帧就绪 = 真实 extents 已下发、其后的重绘已完成、无待重绘区域、
+        // surface 已收缩到 extents 决定的最终尺寸
+        bool extents_ready= sw->last_extents_ms >= start_ms &&
+                            sw->last_repaint_ms >= sw->last_extents_ms;
+        bool geometry_stable= surface->size () == surface->minimumSize ();
+        ready= extents_ready && !sw->is_invalid () && geometry_stable;
+      }
+    }
+    if (ready) {
+      qt_simple_widget_rep* sw= concrete_simple_widget (main_widget);
+      sw->awaiting_first_show = false;
+      set_central_widget_updates_frozen (false);
+    }
+    // 兜底：超时也解冻，宁可显示过渡帧也不能一直冻着
+    else if (QDateTime::currentMSecsSinceEpoch () - start_ms >= 800) {
+      if (!is_nil (main_widget) &&
+          main_widget.rep->type == qt_widget_rep::simple_widget)
+        concrete_simple_widget (main_widget)->awaiting_first_show= false;
+      set_central_widget_updates_frozen (false);
+    }
+    else poll_central_unfreeze (generation, start_ms);
+  });
+}
+
+/******************************************************************************
+ * PDF 阅读位置记忆（存取由 scheme 侧 pdf-last-page-get/set 负责；
+ * (texmacs texmacs tm-files) 模块在 init-research.scm 启动期已加载）
+ ******************************************************************************/
+
+void
+qt_tm_widget_rep::schedule_restore_pdf_last_page (int page) {
+  if (!pdfViewerWidget || page <= 0) return;
+  // 延迟到事件循环下一轮再跳页：布局与滚动范围需在 show 后才就绪
+  PDFReaderWidget* viewer= pdfViewerWidget;
+  QTimer::singleShot (0, viewer,
+                      [viewer, page] () { viewer->goToPage (page); });
+}
+
+void
 qt_tm_widget_rep::sync_startup_tab_mode () {
   QWidget* editorWidget= main_widget->qwid;
   QLayout* layout      = centralwidget ()->layout ();
@@ -1094,6 +1208,30 @@ qt_tm_widget_rep::sync_startup_tab_mode () {
 
     if (!pdfViewerWidget) {
       pdfViewerWidget= new PDFReaderWidget (centralwidget ());
+      // 翻页即存：窗口关闭/程序退出时 ~qt_tm_widget_rep 并不执行，
+      // 退出前没有可靠的保存时机，改为页码变化时立刻写入 preference
+      // （内存 hashmap，落盘由退出时的 save-preferences 统一完成）
+      PDFReaderWidget* viewer= pdfViewerWidget;
+      QObject::connect (pdfViewerWidget, &PDFReaderWidget::pageChanged, viewer,
+                        [this] (int page, int) {
+                          if (pdfTabMode && page > 0)
+                            call ("pdf-last-page-set",
+                                  from_qstring_utf8 (currentPdfPath), page);
+                        });
+      // 连接大纲提取 → dock 填充，dock 点击 → 阅读器跳页（仅连一次）
+      if (pdfOutlineDock) {
+        QObject::connect (
+            pdfViewerWidget, &PDFReaderWidget::outlineLoaded, pdfOutlineDock,
+            static_cast<void (OutlineWidget::*) (
+                const QVector<PdfOutlineItem>&)> (&OutlineWidget::setOutline));
+        PDFReaderWidget* viewer= pdfViewerWidget;
+        QObject::connect (pdfOutlineDock, &OutlineWidget::outlineActivated,
+                          viewer, [viewer] (const QString& target) {
+                            bool ok;
+                            int  page= target.toInt (&ok);
+                            if (ok && page >= 0) viewer->goToPage (page);
+                          });
+      }
     }
     show_widget_in_layout (pdfViewerWidget, layout);
     pdfViewerWidget->setFocus (Qt::OtherFocusReason);
@@ -1101,11 +1239,17 @@ qt_tm_widget_rep::sync_startup_tab_mode () {
     // Connect toolbar to the PDF reader
     pdfToolBar->connectTo (pdfViewerWidget);
 
+    // 恢复页码须在 loadFromFile 之前查询：load 完成时的
+    // updatePageNavigation 会发 pageChanged(1)，把旧记录覆盖成第 1 页
+    object restorePage=
+        call ("pdf-last-page-to-restore", from_qstring_utf8 (currentPdfPath));
+    int pageToRestore= is_int (restorePage) ? as_int (restorePage) : 0;
     // Load PDF if path changed
     if (!currentPdfPath.isEmpty () && currentPdfPath != lastLoadedPdfPath) {
       pdfViewerWidget->loadFromFile (currentPdfPath);
       lastLoadedPdfPath= currentPdfPath;
     }
+    schedule_restore_pdf_last_page (pageToRestore);
   }
   else {
     // Show normal editor view (unless chat tab mode is active)
@@ -1114,11 +1258,19 @@ qt_tm_widget_rep::sync_startup_tab_mode () {
 
     // Disconnect toolbar when leaving PDF mode
     pdfToolBar->disconnectFrom ();
+    // 离开 PDF/编辑器模式时隐藏目录 dock
+    if (pdfOutlineDock) pdfOutlineDock->setVisible (false);
 
     if (!chatTabMode) {
       show_widget_in_layout (editorWidget, layout);
 
+      // 编辑器模式：加载文档大纲到 outline dock
+      if (pdfOutlineDock) {
+        pdfOutlineDock->loadDocumentOutline ();
+      }
+
       update_visibility ();
+      flush_startup_deferred_chrome ();
 
       if (scrollarea ())
         scrollarea ()->surface ()->setSizePolicy (QSizePolicy::Fixed,
@@ -1144,12 +1296,16 @@ qt_tm_widget_rep::sync_startup_tab_mode () {
  */
 void
 qt_tm_widget_rep::sync_chat_tab_mode () {
+  // community 版不含 Chat 标签页，直接返回
+  if (is_community_stem ()) return;
   QWidget* editorWidget= main_widget->qwid;
   QLayout* layout      = centralwidget ()->layout ();
   if (!layout) return;
 
   if (chatTabMode) {
     // Show Chat tab view
+    bool benching= QTChatTabWidget::isInitBenchPending ();
+    if (benching) bench_start ("chat_init: sync_chat_tab_mode");
     // 如果之前处于侧边栏模式，先关闭（记住用户选择，切回时恢复）
     if (chatSidebarMode) {
       chatSidebarModeMemory_= true;
@@ -1180,11 +1336,14 @@ qt_tm_widget_rep::sync_chat_tab_mode () {
     update_visibility ();
 
     if (!chatContentWidget) {
+      if (benching) bench_start ("chat_init: createView");
       chatContentWidget=
           get_chat_controller ()->createView (centralwidget (), this);
+      if (benching) bench_end ("chat_init: createView");
     }
     show_widget_in_layout (chatContentWidget, layout);
     chatContentWidget->setFocus (Qt::OtherFocusReason);
+    if (benching) bench_end ("chat_init: sync_chat_tab_mode");
   }
   else {
     // Show normal editor view only when no special tab mode is active
@@ -1233,6 +1392,9 @@ qt_tm_widget_rep::position_chat_sidebar_button () {
  */
 void
 qt_tm_widget_rep::sync_chat_sidebar_mode () {
+  // community 版未创建 chatSideDock，直接返回，避免空指针解引用
+  // （scheme 侧的 "std j" 仍可能写入 SLOT_CHAT_SIDEBAR_VISIBILITY 触发本函数）
+  if (is_community_stem ()) return;
   QWidget* editorWidget= main_widget->qwid;
   QLayout* layout      = centralwidget ()->layout ();
   if (!layout) return;
@@ -1369,6 +1531,8 @@ qt_tm_widget_rep::update_visibility () {
   bool old_statusVisibility    = mainwindow ()->statusBar ()->isVisible ();
   bool old_titleVisibility     = windowAgent->titleBar ()->isVisible ();
   bool old_pdfToolBarVisibility= pdfToolBar->isVisible ();
+  bool old_pdfOutlineVisibility=
+      pdfOutlineDock ? pdfOutlineDock->isVisible () : false;
 
   bool new_mainVisibility      = visibility[1] && visibility[0];
   bool new_menuVisibility      = visibility[0];
@@ -1384,6 +1548,13 @@ qt_tm_widget_rep::update_visibility () {
   bool new_auxVisibility       = visibility[11];
   bool new_titleVisibility     = visibility[0];
   bool new_pdfToolBarVisibility= false;
+  bool new_pdfOutlineVisibility= false;
+  bool outlineEnabled= get_preference ("outline sidebar", "off") == "on";
+  // 编辑器模式：根据文档大纲内容决定是否显示 dock
+  if (!startupTabMode && !pdfTabMode && !chatTabMode && pdfOutlineDock &&
+      outlineEnabled) {
+    new_pdfOutlineVisibility= pdfOutlineDock->hasContent ();
+  }
 
   if (startupTabMode) {
     new_mainVisibility  = false;
@@ -1432,7 +1603,16 @@ qt_tm_widget_rep::update_visibility () {
     new_tabVisibility       = true;
     new_titleVisibility     = true;
     new_pdfToolBarVisibility= true;
+    new_pdfOutlineVisibility=
+        outlineEnabled && pdfOutlineDock && pdfOutlineDock->hasContent ();
   }
+  // 全屏时菜单栏/标题栏已由 set_full_screen 隐藏，这里不得重新显示：
+  // 光标移入特殊格式会触发本函数，重新显示会重建原生窗口样式并退出全屏
+  if (full_screen) {
+    new_menuVisibility = false;
+    new_titleVisibility= false;
+  }
+
   if (XOR (old_mainVisibility, new_mainVisibility)) {
     mainToolBar->setVisible (new_mainVisibility);
   }
@@ -1468,10 +1648,15 @@ qt_tm_widget_rep::update_visibility () {
   if (XOR (old_pdfToolBarVisibility, new_pdfToolBarVisibility)) {
     pdfToolBar->setVisible (new_pdfToolBarVisibility);
   }
+  if (pdfOutlineDock &&
+      XOR (old_pdfOutlineVisibility, new_pdfOutlineVisibility)) {
+    pdfOutlineDock->setVisible (new_pdfOutlineVisibility);
+  }
 
-  // AI 聊天侧边栏浮动按钮可见性
+  // AI 聊天侧边栏浮动按钮可见性（community 版无 AI Chat，始终隐藏）
   if (chatSidebarToggleBtn) {
-    bool shouldShow= !chatTabMode && !chatSidebarMode && !startupTabMode;
+    bool shouldShow= !is_community_stem () && !chatTabMode &&
+                     !chatSidebarMode && !startupTabMode;
     chatSidebarToggleBtn->setVisible (shouldShow);
     if (shouldShow) {
       chatSidebarToggleBtn->raise ();
@@ -1664,7 +1849,8 @@ qt_tm_widget_rep::send (slot s, blackbox val) {
   } break;
   case SLOT_CHAT_SIDEBAR_VISIBILITY: {
     check_type<bool> (val, s);
-    bool show             = open_box<bool> (val);
+    bool show= open_box<bool> (val);
+    if (is_community_stem ()) break; // community 版无 AI Chat，忽略该 slot
     chatSidebarMode       = show;
     chatSidebarModeMemory_= show;
     sync_chat_sidebar_mode ();
@@ -1739,7 +1925,29 @@ qt_tm_widget_rep::send (slot s, blackbox val) {
     sync_startup_tab_mode ();
     sync_chat_tab_mode ();
     sync_chat_sidebar_mode ();
-    set_central_widget_updates_frozen (false);
+    // 新建编辑器控件的首帧要等真实 extents 下发、surface 收缩居中并重绘后
+    // 才稳定；若立即解冻，用户会看到「沿用旧 extents 的过渡帧」（页面边缘
+    // 闪灰带/白页）。此时改为延迟解冻：轮询首帧就绪后再放开，期间中央区
+    // 保持显示旧内容。仅在真正展示编辑器时延迟：首页/PDF/聊天标签页显示
+    // 的不是编辑器控件，其编辑器在后台永远等不到首帧，会白等整条超时。
+    bool unfreeze_deferred= false;
+    if (centralWidgetUpdatesFrozen_ && !startupTabMode && !pdfTabMode &&
+        !chatTabMode && !is_nil (main_widget) &&
+        main_widget.rep->type == qt_widget_rep::simple_widget) {
+      qt_simple_widget_rep* sw= concrete_simple_widget (main_widget);
+      if (sw->is_editor_widget () && sw->awaiting_first_show) {
+        schedule_central_unfreeze ();
+        unfreeze_deferred= true;
+      }
+    }
+    if (!unfreeze_deferred) set_central_widget_updates_frozen (false);
+    // SLOT_FILE 由 window_set_view 在切 view 后触发：轻量同步 active 高亮，
+    // 避免重建 tab bar。
+    if (tabPageContainer) {
+      url currentView= get_current_view_safe ();
+      if (!is_none (currentView))
+        tabPageContainer->updateActiveTab (currentView);
+    }
   } break;
   case SLOT_POSITION: {
     check_type<coord2> (val, s);
@@ -1931,6 +2139,42 @@ qt_tm_widget_rep::install_main_menu () {
 }
 
 void
+qt_tm_widget_rep::apply_notification_bar_content () {
+  if (is_nil (notification_bar_widget)) return;
+  QList<QAction*>* action_list= notification_bar_widget->get_qactionlist ();
+  if (!action_list || action_list->isEmpty ()) {
+    m_currentScmNotificationItem.clear ();
+    if (scmNotificationBar) scmNotificationBar->clearContent ();
+  }
+  else {
+    QWidget* new_qwidget= notification_bar_widget->as_qwidget ();
+    if (new_qwidget && scmNotificationBar) {
+      scmNotificationBar->setContentWidget (new_qwidget);
+    }
+    eval ("(use-modules (texmacs menus notificationbar))");
+    m_currentScmNotificationItem=
+        to_qstring (as_string (call ("notification-bar-rendered-item")));
+    if (scmNotificationBar) {
+      scmNotificationBar->setSnoozeText (to_qstring (
+          as_string (call ("notification-bar-snooze-action-label"))));
+    }
+  }
+}
+
+void
+qt_tm_widget_rep::flush_startup_deferred_chrome () {
+  if (!startupChromePending_) return;
+  startupChromePending_= false;
+  install_main_menu ();
+  if (!is_nil (main_icons_widget)) {
+    QList<QAction*>* list= main_icons_widget->get_qactionlist ();
+    if (list) replaceButtons (mainToolBar, list);
+  }
+  apply_notification_bar_content ();
+  update_visibility ();
+}
+
+void
 qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
   if (DEBUG_QT_WIDGETS)
     debug_widgets << "qt_tm_widget_rep::write " << slot_name (s) << LF;
@@ -1972,9 +2216,14 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_MAIN_MENU:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
+    if (chatTabMode) break;
     {
       waiting_main_menu_widget= concrete (w);
+      // 启动页期间先存后装，退出启动页时由 flush_startup_deferred_chrome 补装
+      if (startupTabMode) {
+        startupChromePending_= true;
+        break;
+      }
       if (menu_count <= 0) install_main_menu ();
       else if (!contains (waiting_widgets, this))
         // menu interaction ongoing, postpone new menu installation until done
@@ -1984,9 +2233,14 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_MAIN_ICONS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
+    if (chatTabMode) break;
     {
-      main_icons_widget    = concrete (w);
+      main_icons_widget= concrete (w);
+      // 启动页期间先存后装，退出启动页时由 flush_startup_deferred_chrome 补装
+      if (startupTabMode) {
+        startupChromePending_= true;
+        break;
+      }
       QList<QAction*>* list= main_icons_widget->get_qactionlist ();
       if (list) {
         replaceButtons (mainToolBar, list);
@@ -2007,33 +2261,25 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
         if (windowAgent) {
           tabPageContainer->setHitTestVisibleForTabPages (windowAgent);
         }
+        // 增删 tab 后同步一次 active（active 不再由展开树携带）。
+        url currentView= get_current_view_safe ();
+        if (!is_none (currentView))
+          tabPageContainer->updateActiveTab (currentView);
       }
     }
     break;
 
   case SLOT_NOTIFICATION_BAR:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
+    if (chatTabMode) break;
     {
-      notification_bar_widget     = concrete (w);
-      QList<QAction*>* action_list= notification_bar_widget->get_qactionlist ();
-      if (!action_list || action_list->isEmpty ()) {
-        m_currentScmNotificationItem.clear ();
-        if (scmNotificationBar) scmNotificationBar->clearContent ();
+      notification_bar_widget= concrete (w);
+      // 启动页期间先存后装，退出启动页时由 flush_startup_deferred_chrome 补装
+      if (startupTabMode) {
+        startupChromePending_= true;
+        break;
       }
-      else {
-        QWidget* new_qwidget= notification_bar_widget->as_qwidget ();
-        if (new_qwidget && scmNotificationBar) {
-          scmNotificationBar->setContentWidget (new_qwidget);
-        }
-        eval ("(use-modules (texmacs menus notificationbar))");
-        m_currentScmNotificationItem=
-            to_qstring (as_string (call ("notification-bar-rendered-item")));
-        if (scmNotificationBar) {
-          scmNotificationBar->setSnoozeText (to_qstring (
-              as_string (call ("notification-bar-snooze-action-label"))));
-        }
-      }
+      apply_notification_bar_content ();
     }
     break;
 
@@ -2075,7 +2321,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_FOCUS_ICONS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       bool can_update= true;
 #if (QT_VERSION >= 0x050000)
@@ -2105,7 +2350,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_USER_ICONS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       user_icons_widget    = concrete (w);
       QList<QAction*>* list= user_icons_widget->get_qactionlist ();
@@ -2118,7 +2362,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_SIDE_TOOLS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       side_tools_widget   = concrete (w);
       QWidget* new_qwidget= side_tools_widget->as_qwidget ();
@@ -2139,7 +2382,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_LEFT_TOOLS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       left_tools_widget   = concrete (w);
       QWidget* new_qwidget= left_tools_widget->as_qwidget ();
@@ -2160,7 +2402,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_BOTTOM_TOOLS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       bottom_tools_widget = concrete (w);
       QWidget* new_qwidget= bottom_tools_widget->as_qwidget ();
@@ -2181,7 +2422,6 @@ qt_tm_widget_rep::write (slot s, blackbox index, widget w) {
 
   case SLOT_EXTRA_TOOLS:
     check_type_void (index, s);
-    if (startupTabMode || chatTabMode) break;
     {
       extra_tools_widget  = concrete (w);
       QWidget* new_qwidget= extra_tools_widget->as_qwidget ();
@@ -2554,6 +2794,15 @@ qt_tm_widget_rep::onAddTabRequested () {
 }
 
 // 登录相关代码
+QWK::LoginDialog*
+qt_tm_widget_rep::ensureLoginDialog () {
+  if (!m_loginDialog) {
+    m_loginDialog= new QWK::LoginDialog (mainwindow ());
+    setupLoginDialog (m_loginDialog);
+  }
+  return m_loginDialog;
+}
+
 void
 qt_tm_widget_rep::setupLoginDialog (QWK::LoginDialog* loginDialog) {
   // 创建登录对话框内容
@@ -2805,7 +3054,7 @@ qt_tm_widget_rep::setLoginDialogUpdateSectionVisible (bool visible) {
 void
 qt_tm_widget_rep::refreshScmNotificationBar () {
   if (!has_current_window ()) return;
-  call ("update-menus");
+  get_current_editor ()->update_menus (NOTIFICATION);
 }
 
 bool
@@ -2875,7 +3124,7 @@ qt_tm_widget_rep::refreshMembershipInfoInBackground () {
     return;
   }
 
-  eval ("(use-modules (liii account))");
+  eval ("(use-modules (account liii))");
   QString token= to_qstring (as_string (call ("account-load-token")));
   if (token.isEmpty ()) {
     syncScmMembershipNotification (false);
@@ -2909,7 +3158,7 @@ qt_tm_widget_rep::checkLocalTokenAndLogin () {
   setLoginDialogUpdateSectionVisible (shouldShowLoginDialogUpdateSection ());
 
   // 使用scheme代码获取本地token缓存
-  eval ("(use-modules (liii account))");
+  eval ("(use-modules (account liii))");
   string  token  = as_string (call ("account-load-token"));
   QString q_token= to_qstring (token);
   qDebug ("Cached token: %s", q_token.isEmpty () ? "empty" : "found");
@@ -2920,14 +3169,14 @@ qt_tm_widget_rep::checkLocalTokenAndLogin () {
   }
   else {
     // 没有token，显示登录对话框（用户需要手动点击登录按钮）
-    show_login_dialog_at_button (m_loginDialog, loginButton);
+    show_login_dialog_at_button (ensureLoginDialog (), loginButton);
   }
 }
 
 void
 qt_tm_widget_rep::fetchUserInfo (const QString& token, bool showDialog) {
-  // 创建网络访问管理器
-  QNetworkAccessManager* manager= new QNetworkAccessManager ();
+  // 挂到 mainwindow 下，widget 析构时连带回收，避免网络资源泄漏
+  QNetworkAccessManager* manager= new QNetworkAccessManager (mainwindow ());
 
   // 去掉token末尾的'˙'字符
   QString clean_token= token;
@@ -2942,7 +3191,7 @@ qt_tm_widget_rep::fetchUserInfo (const QString& token, bool showDialog) {
   // 创建请求
   QNetworkRequest request;
   // 从Scheme配置获取用户信息API URL
-  eval ("(use-modules (liii account))");
+  eval ("(use-modules (account liii))");
   string userInfoUrl=
       as_string (call ("account-oauth2-config", "user-info-url"));
   request.setUrl (QUrl (to_qstring (userInfoUrl)));
@@ -2952,17 +3201,29 @@ qt_tm_widget_rep::fetchUserInfo (const QString& token, bool showDialog) {
                         to_qstring (stem_user_agent ()).toUtf8 ());
   request.setRawHeader ("X-Device-Id",
                         to_qstring (stem_device_id ()).toUtf8 ());
+  string previewCookie=
+      as_string (call ("account-oauth2-config", "preview-cookie-header"));
+  if (!is_empty (previewCookie))
+    request.setRawHeader ("Cookie", to_qstring (previewCookie).toUtf8 ());
 
   // 发送请求
   QNetworkReply* reply= manager->get (request);
 
-  // 连接信号处理响应
+  // finished 回调守卫（见构造期）。失效分支用 deleteLater 回收网络资源，
+  // 绝不触碰 this；reply 尚存活才能进回调，deleteLater 对重复清理是安全的
+  QPointer<QWidget> guard (qwid);
   QObject::connect (
-      reply, &QNetworkReply::finished, [this, reply, manager, showDialog] () {
+      reply, &QNetworkReply::finished,
+      [guard, this, reply, manager, showDialog] () {
+        if (!guard) {
+          reply->deleteLater ();
+          manager->deleteLater ();
+          return;
+        }
         // 定义统一的错误处理逻辑
         auto handleError= [this] (const QString& errorMessage) {
           showNotLoggedInDialog (qt_translate (from_qstring (errorMessage)));
-          show_login_dialog_at_button (m_loginDialog, loginButton);
+          show_login_dialog_at_button (ensureLoginDialog (), loginButton);
         };
 
         if (reply->error () == QNetworkReply::NoError) {
@@ -2998,7 +3259,7 @@ qt_tm_widget_rep::fetchUserInfo (const QString& token, bool showDialog) {
                                            periodLabelColor, productType);
 
             if (showDialog) {
-              show_login_dialog_at_button (m_loginDialog, loginButton);
+              show_login_dialog_at_button (ensureLoginDialog (), loginButton);
             }
           }
           else {
@@ -3025,67 +3286,12 @@ qt_tm_widget_rep::fetchUserInfo (const QString& token, bool showDialog) {
 void
 qt_tm_widget_rep::triggerOAuth2 () {
   // 隐藏对话框，因为需要用户进行OAuth2认证
-  if (m_loginDialog->isVisible ()) {
+  if (m_loginDialog && m_loginDialog->isVisible ()) {
     m_loginDialog->hide ();
   }
   // 直接调用scheme代码触发OAuth2登录流程
-  eval ("(use-modules (liii account))");
+  eval ("(use-modules (account liii))");
   call ("login");
-}
-
-void
-qt_tm_widget_rep::updateLoginButtonState (bool           isLoggedIn,
-                                          const QString& displayName) {
-  if (!loginButton) return;
-
-  // 设置登录状态属性，用于QSS样式区分
-  loginButton->setProperty ("login-state",
-                            isLoggedIn ? "logged-in" : "not-logged-in");
-
-  // 未登录时显示"未登录"，已登录时不显示文字（只显示图标）
-  QString label;
-  if (!isLoggedIn) {
-    label= qt_translate ("Not logged in");
-  }
-  // 已登录时不设置文字，只显示图标
-
-  QFontMetrics  metrics (loginButton->font ());
-  const int     maxTextWidth= DpiUtils::scaled (76);
-  const QString visibleText=
-      metrics.elidedText (label, Qt::ElideRight, maxTextWidth);
-
-  loginButton->setText (visibleText);
-  loginButton->setToolTip (isLoggedIn ? qt_translate ("User Center") : label);
-  loginButton->setAccessibleName (isLoggedIn ? qt_translate ("User Center")
-                                             : label);
-
-  const int horizontalPadding= DpiUtils::scaled (26);
-  const int iconTextSpacing= visibleText.isEmpty () ? 0 : DpiUtils::scaled (6);
-  const int iconWidth      = loginButton->iconSize ().width ();
-  const int textWidth      = metrics.horizontalAdvance (visibleText);
-  const int minWidth       = DpiUtils::scaled (60);
-  const int maxWidth=
-      isLoggedIn ? DpiUtils::scaled (60) : DpiUtils::scaled (120);
-  const int rawDesiredWidth=
-      iconWidth + iconTextSpacing + textWidth + horizontalPadding;
-  const int desiredWidth= qBound (minWidth, rawDesiredWidth, maxWidth);
-
-  // 强制刷新样式以应用状态相关样式
-  loginButton->style ()->unpolish (loginButton);
-  loginButton->style ()->polish (loginButton);
-  auto applyWidth= [this, desiredWidth] () {
-    if (!loginButton) return;
-    loginButton->setMinimumWidth (desiredWidth);
-    loginButton->setMaximumWidth (desiredWidth);
-    loginButton->setFixedWidth (desiredWidth);
-    loginButton->resize (desiredWidth, loginButton->height ());
-    loginButton->updateGeometry ();
-    if (loginButton->parentWidget () && loginButton->parentWidget ()->layout ())
-      loginButton->parentWidget ()->layout ()->activate ();
-  };
-  applyWidth ();
-
-  QTimer::singleShot (0, loginButton, applyWidth);
 }
 
 void
@@ -3096,13 +3302,11 @@ qt_tm_widget_rep::updateDialogContent (bool isLoggedIn, const QString& username,
                                        const QString& periodLabel,
                                        const QString& periodLabelColor,
                                        const QString& productType) {
-  // 保存会员类型
-  m_memberType= memberType;
+  // 保存登录态，供 resize 回调读取
+  m_isLoggedIn= isLoggedIn;
 
-  updateLoginButtonState (isLoggedIn, isLoggedIn ? username : QString ());
-
-  // 更新VIP按钮可见性（根据memberType判断）
-  updateVipButtonVisibility (isLoggedIn, memberType);
+  // 更新邀请按钮可见性（已登录即显示）
+  updateInviteButtonVisibility (isLoggedIn);
 
   // 更新对话框中的UI组件内容
   if (nameLabel) {
@@ -3165,40 +3369,49 @@ qt_tm_widget_rep::showNotLoggedInDialog (const QString& errorMessage) {
                        "liii", qt_translate ("Non-member"), "", "", "");
 }
 
+/**
+ * @brief 更新邀请按钮可见性。
+ *
+ * - 商业版 + 已登录：显示
+ * - 半屏（窗口宽度 ≤ 屏幕可用宽度一半）：隐藏，给标签页腾空间
+ * - 社区版：永远不显示
+ *
+ * 不再按会员等级区分——邀请功能对所有已登录用户开放。
+ */
 void
-qt_tm_widget_rep::updateVipButtonVisibility (bool           isLoggedIn,
-                                             const QString& memberType) {
-  if (!vipButton) {
+qt_tm_widget_rep::updateInviteButtonVisibility (bool isLoggedIn) {
+  if (!inviteButton) {
     return;
   }
 
-  // 社区版不显示VIP按钮
-  if (is_community_stem ()) {
-    vipButton->hide ();
-    return;
+  bool shouldShow= false;
+  if (!is_community_stem ()) {
+    // 已登录即显示，不再按会员等级区分
+    shouldShow= isLoggedIn;
+
+    // 半屏（窗口宽度 < 屏幕可用宽度的一半）下空间紧张，隐藏邀请按钮，
+    // 优先保证标签页可用宽度
+    if (shouldShow) {
+      QMainWindow* mw= mainwindow ();
+      if (mw) {
+        int screen_w=
+            QApplication::primaryScreen ()->availableGeometry ().width ();
+        if (mw->width () * 2 <= screen_w) {
+          shouldShow= false;
+        }
+      }
+    }
   }
 
-  // 未登录用户：显示VIP按钮
-  if (!isLoggedIn) {
-    vipButton->show ();
-    return;
+  inviteButton->setVisible (shouldShow);
+  if (tabPageContainer) {
+    tabPageContainer->setVipButtonReserved (shouldShow);
   }
+}
 
-  // 已登录用户：根据memberType决定是否显示
-  // 如果memberType为空，说明还未获取用户信息，保持当前状态（不隐藏）
-  if (memberType.isEmpty ()) {
-    return;
-  }
-
-  // "Regular User"(普通用户)或"Trial Member"(体验会员)时显示
-  // 其他(Fruit User, Sprout User, Seed User, Member)时不显示
-  if (memberType == QStringLiteral ("Regular User") ||
-      memberType == QStringLiteral ("Trial Member")) {
-    vipButton->show ();
-  }
-  else {
-    vipButton->hide ();
-  }
+void
+qt_tm_widget_rep::updateInviteButtonVisibility_onResize () {
+  updateInviteButtonVisibility (m_isLoggedIn);
 }
 
 void
@@ -3222,27 +3435,51 @@ qt_tm_widget_rep::logout () {
   }
 }
 
-void
-qt_tm_widget_rep::openRenewalPage () {
-  // 获取当前token
-  eval ("(use-modules (liii account))");
+/**
+ * @brief 构造带鉴权后缀的 URL。
+ *
+ * 拼接 `<baseUrl>?key=<sha256(token)>&user=<userId>`，token 从 account
+ * 模块加载、 计算 SHA256 哈希作为 key 参数。供 openRenewalPage /
+ * openInvitationPage 复用。
+ */
+QString
+qt_tm_widget_rep::buildAuthUrl (const QString& baseUrl) {
+  eval ("(use-modules (account liii))");
   string  token  = as_string (call ("account-load-token"));
   QString q_token= to_qstring (token);
 
-  // 获取定价页面URL
-  string  pricingUrl= as_string (call ("account-oauth2-config", "pricing-url"));
-  QString q_pricingUrl= to_qstring (pricingUrl);
-
-  // 计算token的SHA256哈希值作为key参数
   QByteArray tokenBytes= q_token.toUtf8 ();
   QByteArray hash=
       QCryptographicHash::hash (tokenBytes, QCryptographicHash::Sha256);
   QString keyParam= hash.toHex ();
 
-  // 构建完整URL
-  QString fullUrl= q_pricingUrl + "?key=" + keyParam + "&user=" + m_userId;
+  return baseUrl + "?key=" + keyParam + "&user=" + m_userId;
+}
+
+void
+qt_tm_widget_rep::openRenewalPage () {
+  // 获取定价页面 URL
+  string  pricingUrl= as_string (call ("account-oauth2-config", "pricing-url"));
+  QString fullUrl   = buildAuthUrl (to_qstring (pricingUrl));
 
   // 打开浏览器跳转到续费页面
+  QDesktopServices::openUrl (QUrl (fullUrl));
+}
+
+/**
+ * @brief 打开邀请好友页面。
+ *
+ * 邀请页 base URL 通过 `account-oauth2-config` 的 `growth-url` 配置项获取，
+ * 按 staging/prod profile 自动切换；URL 后缀由 buildAuthUrl 拼接
+ * （key/user 参数用于后台识别邀请人）。
+ */
+void
+qt_tm_widget_rep::openInvitationPage () {
+  // 获取邀请页面 URL
+  string invitationUrl=
+      as_string (call ("account-oauth2-config", "growth-url"));
+  QString fullUrl= buildAuthUrl (to_qstring (invitationUrl));
+
   QDesktopServices::openUrl (QUrl (fullUrl));
 }
 
@@ -3253,12 +3490,22 @@ qt_tm_widget_rep::checkNetworkAvailable () {
   QNetworkRequest        request (testUrl);
   QNetworkReply*         reply= manager->head (request);
 
-  QObject::connect (reply, &QNetworkReply::finished, [this, reply] () {
-    bool success= (reply->error () == QNetworkReply::NoError);
-    reply->deleteLater ();
-    bool isLoggedIn= as_bool (call ("logged-in?"));
-    syncScmGuestNotification (!is_community_stem () && !isLoggedIn && success);
-  });
+  // finished 回调守卫（同 fetchUserInfo / checkVersionUpdate 模式）
+  QPointer<QWidget> guard (qwid);
+  QObject::connect (reply, &QNetworkReply::finished,
+                    [guard, this, reply, manager] () {
+                      if (!guard) {
+                        reply->deleteLater ();
+                        manager->deleteLater ();
+                        return;
+                      }
+                      bool success= (reply->error () == QNetworkReply::NoError);
+                      bool isLoggedIn= as_bool (call ("logged-in?"));
+                      syncScmGuestNotification (!is_community_stem () &&
+                                                !isLoggedIn && success);
+                      reply->deleteLater ();
+                      manager->deleteLater ();
+                    });
 }
 
 // 检查版本更新，根据条件显示提示条
@@ -3309,35 +3556,48 @@ qt_tm_widget_rep::checkVersionUpdate () {
                         to_qstring (stem_user_agent ()).toUtf8 ());
 
   QNetworkReply* reply= manager->get (request);
-  QObject::connect (reply, &QNetworkReply::finished, [this, reply, manager] () {
-    if (reply->error () == QNetworkReply::NoError) {
-      QByteArray data         = reply->readAll ();
-      QString    remoteVersion= parseVersionFromTM (data);
-      QString    localVersion = XMACS_VERSION;
+  // finished 回调守卫（见构造期说明）
+  QPointer<QWidget> guard (qwid);
+  QObject::connect (
+      reply, &QNetworkReply::finished, [guard, this, reply, manager] () {
+        if (!guard) {
+          reply->deleteLater ();
+          manager->deleteLater ();
+          return;
+        }
+        if (reply->error () == QNetworkReply::NoError) {
+          QByteArray data         = reply->readAll ();
+          QString    remoteVersion= parseVersionFromTM (data);
+          QString    localVersion = XMACS_VERSION;
 
-      if (!remoteVersion.isEmpty ()) {
-        qDebug () << "[VersionUpdate] Parsed remote version:" << remoteVersion;
-      }
+          if (!remoteVersion.isEmpty ()) {
+            if (DEBUG_IO)
+              debug_io << "[VersionUpdate] Parsed remote version: "
+                       << qPrintable (remoteVersion) << "\n";
+          }
 
-      if (remoteVersion.isEmpty ()) {
-        qDebug () << "[VersionUpdate] Failed to parse version from response";
-        syncScmUpdateNotification (false);
-      }
-      else if (isVersionNewer (remoteVersion, localVersion)) {
-        syncScmUpdateNotification (true, remoteVersion);
-      }
-      else {
-        syncScmUpdateNotification (false);
-      }
-    }
-    else {
-      qDebug () << "[VersionUpdate] Failed to fetch remote version:"
-                << reply->errorString ();
-      syncScmUpdateNotification (false);
-    }
-    reply->deleteLater ();
-    manager->deleteLater ();
-  });
+          if (remoteVersion.isEmpty ()) {
+            if (DEBUG_IO)
+              debug_io
+                  << "[VersionUpdate] Failed to parse version from response\n";
+            syncScmUpdateNotification (false);
+          }
+          else if (isVersionNewer (remoteVersion, localVersion)) {
+            syncScmUpdateNotification (true, remoteVersion);
+          }
+          else {
+            syncScmUpdateNotification (false);
+          }
+        }
+        else {
+          if (DEBUG_IO)
+            debug_io << "[VersionUpdate] Failed to fetch remote version: "
+                     << qPrintable (reply->errorString ()) << "\n";
+          syncScmUpdateNotification (false);
+        }
+        reply->deleteLater ();
+        manager->deleteLater ();
+      });
 }
 
 QString

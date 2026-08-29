@@ -11,17 +11,52 @@
 
 #include "edit_modify.hpp"
 #include "modification.hpp"
+#include "new_view.hpp"
+#include "new_window.hpp"
 #include "observers.hpp"
 #include "tm_window.hpp"
+#include "tmfs_url.hpp"
 #include "tree_observer.hpp"
+
+/******************************************************************************
+ * Loro related externs and statics
+ ******************************************************************************/
+
+extern void (*g_loro_broadcast_update) (string bytes);
+
+static void
+local_update_cb (void* user_data, const uint8_t* bytes, size_t len) {
+  if (g_loro_broadcast_update) {
+    if (DEBUG_LORO)
+      debug_loro << "Local update generated, size: " << len
+                 << " bytes. Broadcasting...\n";
+    string data ((const char*) bytes, len);
+    g_loro_broadcast_update (data);
+  }
+  else {
+    if (DEBUG_LORO)
+      debug_loro << "Local update generated, but no broadcast handler "
+                 << "registered.\n";
+  }
+}
 
 /******************************************************************************
  * Constructors and destructors
  ******************************************************************************/
 
+#ifndef LORO_ENABLED
 edit_modify_rep::edit_modify_rep ()
     : editor_rep (), // NOTE: ignored by the compiler, but suppresses warning
       author (new_author ()), arch (author, rp) {}
+#else
+edit_modify_rep::edit_modify_rep ()
+    : editor_rep (), // NOTE: ignored by the compiler, but suppresses warning
+      author (new_author ()), arch (author, rp), loro_doc (),
+      loro_seeded (false), loro_applying_remote (false), loro_routing (false),
+      loro_collab_on (false) {
+  loro_doc->on_local_update (local_update_cb, this);
+}
+#endif // LORO_ENABLED
 edit_modify_rep::~edit_modify_rep () {}
 
 /******************************************************************************
@@ -210,6 +245,13 @@ edit_set_cursor (editor_rep* ed, path pp, tree data) {
 
 void
 edit_announce (editor_rep* ed, modification mod) {
+#ifdef LORO_ENABLED
+  if (DEBUG_LORO) {
+    if (mod->k != MOD_SET_CURSOR) debug_loro << "mod: " << mod << "\n";
+  }
+  if (mod->k != MOD_SET_CURSOR) ed->ensure_loro_seeded ();
+#endif
+
   switch (mod->k) {
   case MOD_ASSIGN:
     edit_assign (ed, mod->p, mod->t);
@@ -247,7 +289,12 @@ void
 edit_done (editor_rep* ed, modification mod) {
   path p= copy (mod->p);
   ASSERT (ed->the_buffer_path () <= p, "invalid modification");
-  if (mod->k != MOD_SET_CURSOR) ed->post_notify (p);
+  if (mod->k != MOD_SET_CURSOR) {
+    ed->post_notify (p);
+#ifdef LORO_ENABLED
+    ed->mirror_loro (mod);
+#endif
+  }
 }
 
 void
@@ -408,11 +455,34 @@ void
 edit_modify_rep::notify_save (bool real_save) {
   arch->confirm ();
   arch->notify_autosave ();
-  if (real_save) arch->notify_save ();
+  if (real_save) {
+    arch->notify_save ();
+    // 保存清脏后刷新 tab 栏与侧栏文档列表；本 editor 的视图未挂窗口时跳过：
+    // update_menus 的 SERVER 宏会 focus_on_this_editor 把 current view 切到
+    // 本 editor 的视图，无窗口（如导出 PDF 临时 buffer 的 passive view）时
+    // concrete_window () 断言 "no window attached to view"
+    bool attached= false;
+    if (!is_nil (buf)) {
+      array<url> vs= buffer_to_views (buf->buf->name);
+      for (int i= 0; i < N (vs); i++)
+        if (view_to_editor (vs[i]) == editor (this) &&
+            !is_none (view_to_window (vs[i])))
+          attached= true;
+    }
+    if (attached) update_menus (TAB_PAGES | SIDE_TOOLS);
+  }
 }
 
 bool
 edit_modify_rep::need_save (bool real_save) {
+  // 云文档内容权威在云端，但需让 autosave 能感知本端编辑以触发本地备份上传：
+  // 仅"真保存"语义（real_save=true，经 needs_to_be_saved，驱动标题星号 / 关闭
+  // 提示 / tab 星号）对云文档恒不脏；autosave（real_save=false，经
+  // needs_to_be_autosaved）照常跟 archiver——本端编辑 require_save 置脏、远端
+  // apply_remote 不 require_save，故 autosave 只跟本端编辑。据 tmfs://collab/
+  // URL 判定，与 scheme 侧 collab-buffer? 同源。
+  if (!is_nil (buf) && is_rooted_tmfs (buf->buf->name, "collab") && real_save)
+    return false;
   if (arch->conform_save ()) return false;
   if (real_save) return true;
   return !arch->conform_autosave ();

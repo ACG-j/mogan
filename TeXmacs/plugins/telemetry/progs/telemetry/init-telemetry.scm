@@ -1,0 +1,92 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; MODULE      : init-telemetry.scm
+;; DESCRIPTION : Telemetry initialization and periodic flush
+;; COPYRIGHT   : (C) 2026 Yuki Lu
+;;
+;; This software falls under the GNU general public license version 3 or later.
+;; It comes WITHOUT ANY WARRANTY WHATSOEVER. For details, see the file LICENSE
+;; in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(texmacs-module (telemetry init-telemetry)
+  (:use (telemetry telemetry-track) (telemetry telemetry-utils))
+) ;texmacs-module
+
+(import (scheme base))
+
+(define telemetry-scheduled? #f)
+
+(define (telemetry-scheduler-step)
+  (when (telemetry-enabled?)
+    (telemetry-flush-if-needed)
+  ) ;when
+  (telemetry-delayed)
+) ;define
+
+(define (telemetry-delayed)
+  (delayed (:pause (telemetry-get-flush-interval)) (telemetry-scheduler-step))
+) ;define
+
+(define (telemetry-clean-orphans)
+  ;; 启动时清理：删除不在 meta 列表中的孤儿 jsonl
+  (let* ((meta (telemetry-read-meta))
+         (valid-files (map (lambda (e) (assoc-ref e "filename")) meta))
+         (dir-url (system->url (telemetry-main-dir)))
+         (pattern (url-append dir-url (url-wildcard "*.jsonl")))
+         (files (url->list (url-expand (url-complete pattern "fr"))))
+        ) ;
+    (for-each (lambda (f)
+                (let ((fname (url->string (url-tail f))))
+                  (when (and (string-starts? fname "detail-telemetry-")
+                          (not (member fname valid-files))
+                        ) ;and
+                    (catch #t (lambda () (path-unlink (url->system f))) (lambda args #f))
+                  ) ;when
+                ) ;let
+              ) ;lambda
+      files
+    ) ;for-each
+  ) ;let*
+) ;define
+
+(tm-define (init-telemetry)
+  ;; 先消费 *telemetry-pending*：插件加载前 C++ 上报入队的事件在此一次性
+  ;; 补 track（若 telemetry-disabled?，track-event 内部会直接返回 #f，
+  ;; 符合预期）。drain 完成后清空 pending，后续上报走 track-event 直接路径。
+  ;; telemetry-drain-pending! 注入在 rootlet，这里直接调用。
+  (telemetry-drain-pending!)
+  (if telemetry-scheduled?
+    (debug-message "debug-events" "[telemetry] init: already initialized\n")
+    (if (telemetry-enabled?)
+      (begin
+        (telemetry-clean-orphans)
+        (set! telemetry-scheduled? #t)
+        (debug-message "debug-events"
+          (string-append "[telemetry] init: enabled, buffer="
+            (number->string (telemetry-get-buffer-size))
+            ", interval="
+            (number->string (telemetry-get-flush-interval))
+            "ms\n"
+          ) ;string-append
+        ) ;debug-message
+        (on-exit (catch #t
+                   (lambda () (track-event "CLOSE" '()) (telemetry-flush-if-needed))
+                   (lambda args
+                     (debug-message "debug-events"
+                       (string-append "[telemetry] error: exit flush failed: "
+                         (object->string args)
+                         "\n"
+                       ) ;string-append
+                     ) ;debug-message
+                   ) ;lambda
+                 ) ;catch
+        ) ;on-exit
+        (telemetry-delayed)
+      ) ;begin
+      (debug-message "debug-events" "[telemetry] init: disabled\n")
+    ) ;if
+  ) ;if
+) ;tm-define

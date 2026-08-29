@@ -12,962 +12,1338 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (texmacs-module (texmacs menus preferences-widgets)
-  (:use (texmacs menus preferences-menu)
-        (texmacs texmacs tm-files)
-        (language locale)))
+  (:use (kernel texmacs pref-keys)
+    (texmacs menus preferences-menu)
+    (texmacs menus preferences-tools)
+    (utils misc updater)
+    (language locale)
+  ) ;:use
+) ;texmacs-module
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Wrapper
+;; 模块状态：key -> kind 表（由 preferences-qml-meta 构建时填充）。
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-#|
-set-pretty-preference*
-设置需要重启生效的偏好设置，并在更改前询问用户是否立即重启。
+(define preferences-qml-field-kind-table (make-ahash-table))
 
-语法
-----
-(set-pretty-preference* which pretty-val)
+(define preferences-qml-field-kind-table-initialized? #f)
 
-参数
-----
-which : string
-偏好设置标识符：
-- "look and feel" : 外观和感觉
-- "gui theme"     : GUI主题
+(define (preferences-qml-field-kind key)
+  (or (ahash-ref preferences-qml-field-kind-table key) "toggle")
+) ;define
 
-pretty-val : string
-要设置的偏好值。
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 通用包装：需重启字段的三态确认 + buffer management 副作用
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-返回值
-----
-#<unspecified>
-无显式返回值（返回 #<unspecified>）。
-
-逻辑
-----
-1. 获取当前偏好设置值 old
-2. 如果新值 pretty-val 与旧值 old 不同：
-   a. 显示确认对话框，询问用户是否立即重启以应用更改
-   b. 无论用户如何响应对话框，都会先设置偏好值 (set-pretty-preference which pretty-val)
-   c. 预期的用户交互有三种情况：
-      - 用户点击"是"（重启）：保存所有缓冲区并重启 TeXmacs
-      - 用户点击"否"（不重启）：只设置偏好值，不重启应用程序
-      - 用户关闭对话框：只设置偏好值，不重启应用程序
-
-注意
-----
-此函数用于处理那些需要重启应用程序才能完全生效的偏好设置更改。
-主要用于外观、主题等全局设置，这些设置通常需要重新加载界面资源。
-无论用户是否选择立即重启，偏好设置都会被更新，但完全生效需要重启应用程序。
-|#
 (tm-define (set-pretty-preference* which pretty-val)
   (let* ((old (get-pretty-preference which)))
     (when (!= old pretty-val)
-      (let ((msg (restart-required-message)))
-        (user-confirm msg #f
-          (lambda (answ)
-            (set-pretty-preference which pretty-val)
-            (when answ
-              (begin
-                (save-all-buffers)
-                (restart-TeXmacs)))))))))
-
-(define (on-buffer-management-changed pretty-val)
-  (let ((can-use-tabbar? (== pretty-val "Multiple documents share window")))
-    (begin
-      (set-boolean-preference "tab bar" can-use-tabbar?)
-      (show-icon-bar 4 can-use-tabbar?)
-      (set-pretty-preference "buffer management" pretty-val)
-    )))
+      ;; 三按钮确认：重启 / 稍后（silent 写值，下次启动生效）/ 取消（回滚旧值）。
+      (confirm-restart-and-act (restart-preference-title which)
+        (lambda () (set-pretty-preference which pretty-val))
+        (lambda () (set-pretty-preference which old))
+        (lambda () (set-pretty-preference-silent which pretty-val))
+      ) ;confirm-restart-and-act
+    ) ;when
+  ) ;let*
+) ;tm-define
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Appearance preferences
+;; 偏好内部键 ↔ 显示文案的编解码表（General tab 用）
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-preference-names "look and feel"
-  ("default" "Default")
-  ("emacs" "Emacs")
-  ("gnome" "Gnome")
-  ("kde" "KDE")
-  ("macos" "macOS")
-  ("windows" "Windows"))
+ ("default" "Default")
+ ("emacs" "Emacs")
+ ("gnome" "Gnome")
+ ("kde" "KDE")
+ ("macos" "macOS")
+ ("windows" "Windows")
+) ;define-preference-names
 
 (for (l supported-languages)
-  (set-preference-name "language" l (upcase-first l)))
+  (set-preference-name "language" l (upcase-first l))
+) ;for
 
 (define-preference-names "complex actions"
-  ("menus" "Through the menus")
-  ("popups" "Through popup windows"))
+ ("menus" "Through the menus")
+ ("popups" "Through popup windows")
+) ;define-preference-names
 
 (define-preference-names "interactive questions"
-  ("footer" "On the footer")
-  ("popup" "In popup windows"))
+ ("footer" "On the footer")
+ ("popup" "In popup windows")
+) ;define-preference-names
 
 (define-preference-names "completion style"
-  ("inline" "Inline")
-  ("popup" "Popup"))
+ ("inline" "Inline")
+ ("popup" "Popup")
+) ;define-preference-names
 
 (define-preference-names "detailed menus"
-  ("simple ""Simplified menus")
-  ("detailed" "Detailed menus"))
+ ("simple" "Simplified menus")
+ ("detailed" "Detailed menus")
+) ;define-preference-names
 
 (define-preference-names "buffer management"
-  ("separate" "Documents in separate windows")
-  ("shared" "Multiple documents share window"))
+ ("separate" "Documents in separate windows")
+ ("shared" "Multiple documents share window")
+) ;define-preference-names
 
-(define-preference-names "gui theme"
-  ("liii" "Liii")
-  ("liii-night" "Liii Dark"))
+(define-preference-names "gui theme" ("liii" "Liii") ("liii-night" "Liii Dark"))
 
-(tm-widget (general-preferences-widget)
-  (aligned
-    (item (text "Look and feel:")
-      (enum (set-pretty-preference* "look and feel" answer)
-            (cond ((os-win32?) '("Default" "Emacs" "Windows"))
-                  ((os-macos?) '("Default" "Emacs"  "macOS" ))
-                  (else '("Default" "Emacs" "Gnome" "KDE")))
-            (get-pretty-preference "look and feel")
-            "18em"))
-    (item (text "User interface language:")
-      (enum (set-language-and-notify (language-name-to-language answer))
-            (map language-to-language-name supported-languages)
-            (language-to-language-name (get-preference "language"))
-            "18em"))
-    (item (text "Complex actions:")
-      (enum (set-pretty-preference "complex actions" answer)
-            '("Through the menus" "Through popup windows")
-            (get-pretty-preference "complex actions")
-            "18em"))
-    (item (text "Interactive questions:")
-      (enum (set-pretty-preference "interactive questions" answer)
-            '("On the footer" "In popup windows")
-            (get-pretty-preference "interactive questions")
-            "18em"))
-    (item (text "Details in menus:")
-      (enum (set-pretty-preference "detailed menus" answer)
-            '("Simplified menus" "Detailed menus")
-            (get-pretty-preference "detailed menus")
-            "18em"))
-    (item (text "Buffer management:")
-      (enum (on-buffer-management-changed answer)
-            '("Documents in separate windows"
-              "Multiple documents share window")
-            (get-pretty-preference "buffer management")
-            "18em"))
-    (item (text "User interface theme:")
-      (enum (set-pretty-preference* "gui theme" answer)
-            '("Liii" "Liii Dark")
-            (get-pretty-preference "gui theme")
-            "18em"))
-    (item (text "Completion style:")
-      (enum (set-pretty-preference "completion style" answer)
-            '("Popup" "Inline")
-            (get-pretty-preference "completion style")
-            "18em"))))
+(define-preference-names "magic-paste-shortcut"
+ ("ctrl+shift+v" "Ctrl+Shift+V")
+ ("ctrl+v" "Ctrl+V")
+) ;define-preference-names
+
+;; macOS 上 Ctrl 键实际由 Command 承担，展示串改用 Cmd 前缀。
+;; preference 内部存储保持 "ctrl+..." 不变（与 generic-kbd.scm 比对一致），
+;; 仅覆盖 encode 表影响首选项面板的显示。
+(when (os-macos?)
+  (set-preference-name "magic-paste-shortcut" "ctrl+shift+v" "Cmd+Shift+V")
+  (set-preference-name "magic-paste-shortcut" "ctrl+v" "Cmd+V")
+) ;when
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Keyboard preferences
+;; 编解码表（Keyboard tab 用）
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-preference-names "text spacebar"
-  ("default" "Default")
-  ("allow multiple spaces" "Allow multiple spaces")
-  ("glue multiple spaces" "Glue multiple spaces")
-  ("no multiple spaces" "No multiple spaces"))
+ ("default" "Default")
+ ("allow multiple spaces" "Allow multiple spaces")
+ ("glue multiple spaces" "Glue multiple spaces")
+ ("no multiple spaces" "No multiple spaces")
+) ;define-preference-names
 
 (define-preference-names "math spacebar"
-  ("default" "Default")
-  ("allow spurious spaces" "Allow spurious spaces")
-  ("avoid spurious spaces" "Avoid spurious spaces")
-  ("no spurious spaces" "No spurious spaces"))
+ ("default" "Default")
+ ("allow spurious spaces" "Allow spurious spaces")
+ ("avoid spurious spaces" "Avoid spurious spaces")
+ ("no spurious spaces" "No spurious spaces")
+) ;define-preference-names
 
 (define-preference-names "automatic quotes"
-  ("default" "Default")
-  ("none" "Disabled")
-  ("dutch" "Dutch")
-  ("english" "English")
-  ("french" "French")
-  ("german" "German")
-  ("spanish" "Spanish")
-  ("swiss" "Swiss"))
+ ("default" "Default")
+ ("none" "Disabled")
+ ("dutch" "Dutch")
+ ("english" "English")
+ ("french" "French")
+ ("german" "German")
+ ("spanish" "Spanish")
+ ("swiss" "Swiss")
+) ;define-preference-names
 
 (define-preference-names "automatic brackets"
-  ("off" "Disabled")
-  ("mathematics" "Inside mathematics" "mathematics")
-  ("on" "Enabled"))
+ ("off" "Disabled")
+ ("mathematics" "Inside mathematics" "mathematics")
+ ("on" "Enabled")
+) ;define-preference-names
 
 (define-preference-names "cyrillic input method"
-  ("none" "None")
-  ("translit" "Translit")
-  ("jcuken" "Jcuken")
-  ("yawerty" "Yawerty"))
+ ("none" "None")
+ ("translit" "Translit")
+ ("jcuken" "Jcuken")
+ ("yawerty" "Yawerty")
+) ;define-preference-names
 
-(tm-widget (keyboard-preferences-widget)
-  ======
-  (aligned
-    (item (text "Space bar in text mode:")
-      (enum (set-pretty-preference "text spacebar" answer)
-            '("Default" "No multiple spaces"
-              "Glue multiple spaces" "Allow multiple spaces")
-            (get-pretty-preference "text spacebar")
-            "15em"))
-    (item (text "Space bar in math mode:")
-      (enum (set-pretty-preference "math spacebar" answer)
-            '("Default" "No spurious spaces"
-              "Avoid spurious spaces" "Allow spurious spaces")
-            (get-pretty-preference "math spacebar")
-            "15em"))
-    (item (text "Automatic quotes:")
-      (enum (set-pretty-preference "automatic quotes" answer)
-            '("Default" "Disabled" "Dutch" "English" "French" "German" "Spanish" "Swiss")
-            (get-pretty-preference "automatic quotes")
-            "15em"))
-    (item (text "Automatic brackets:")
-      (enum (set-pretty-preference "automatic brackets" answer)
-            '("Disabled" "Enabled" "Inside mathematics")
-            (get-pretty-preference "automatic brackets")
-            "15em"))
-    (item (text "Cyrillic input method:")
-      (enum (set-pretty-preference "cyrillic input method" answer)
-            '("None" "Translit" "Jcuken" "Yawerty")
-            (get-pretty-preference "cyrillic input method")
-            "15em"))
-    (assuming (os-macos?)
-      (item (text "Keyboard shortcut style:")
-        (enum (set-pretty-preference* "keyboard shortcut style" answer)
-              '("Text" "Symbol")
-              (get-pretty-preference "keyboard shortcut style")
-              "15em"))))
-  ====== ======
-  (bold (text "Remote controllers with keyboard simulation"))
-  ======
-  (hlist
-    (aligned
-      (item (text "Left:")
-        (enum (set-preference "ir-left" answer) '("pageup" "")
-              (get-preference "ir-left") "8em"))
-      (item (text "Right:")
-        (enum (set-preference "ir-right" answer) '("pagedown" "")
-              (get-preference "ir-right") "8em"))
-      (item (text "Up:")
-        (enum (set-preference "ir-up" answer) '("home" "")
-              (get-preference "ir-up") "8em"))
-      (item (text "Down:")
-        (enum (set-preference "ir-down" answer) '("end" "")
-              (get-preference "ir-down") "8em")))
-    ///
-    (aligned
-      (item (text "Center:")
-        (enum (set-preference "ir-center" answer) '("return" "S-return" "")
-              (get-preference "ir-center") "8em"))
-      (item (text "Play:")
-        (enum (set-preference "ir-play" answer) '("F5" "")
-              (get-preference "ir-play") "8em"))
-      (item (text "Pause:")
-        (enum (set-preference "ir-pause" answer) '("escape" "")
-              (get-preference "ir-pause") "8em"))
-      (item (text "Menu:")
-        (enum (set-preference "ir-menu" answer) '("." "")
-              (get-preference "ir-menu") "8em")))))
+(define-preference-names "emoji keyboard" ("off" "Disabled") ("on" "Enabled"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Mathematics preferences widget
-;; FIXME: - "assuming" has no effect in refreshable widgets
-;;        - Too much alignment tweaking      
+;; Convert 各子 tab 的编解码表（LaTeX / BibTeX 双向偏好 helper、image format
+;; helper 见 preferences-tools.scm）
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(tm-widget (math-keyboard-preferences-widget)
-  (bold (text "Keyboard"))
-  ======
-  (aligned
-    (meti (text "Use extensible brackets")
-      (toggle (set-boolean-preference "use large brackets"
-                                      answer)
-              (get-boolean-preference "use large brackets")))))
-
-(tm-widget (math-hints-preferences-widget)
-  (bold (text "Contextual hints"))
-  ======
-  (refreshable "math-pref-context"
-    (aligned
-      (meti (text "Show full context")
-        (toggle (set-boolean-preference "show full context" answer)
-                (get-boolean-preference "show full context")))
-      (meti (text "Show table cells")
-        (toggle (set-boolean-preference "show table cells" answer)
-                (get-boolean-preference "show table cells")))
-      (meti (text "Show current focus")
-        (toggle (set-boolean-preference "show focus" answer)
-                (get-boolean-preference "show focus")))
-      (assuming (get-boolean-preference "semantic editing")
-        (meti (text "Only show semantic focus")
-          (toggle (set-boolean-preference
-                   "show only semantic focus" answer)
-                  (get-boolean-preference
-                   "show only semantic focus")))))))
-
-(tm-widget (math-semantics-preferences-widget)
-  (bold (text "Semantics"))
-  ======
-  (refreshable "math-pref-semantic-selections"
-    (aligned
-      (meti (text "Semantic editing")
-        (toggle (and (set-boolean-preference "semantic editing"
-                                             answer)
-                     (refresh-now "math-pref-semantic-selections")
-                     (refresh-now "math-pref-context"))
-                (get-boolean-preference "semantic editing")))
-      (assuming (get-boolean-preference "semantic editing")
-        (meti (text "Semantic selections")
-          (toggle (set-boolean-preference "semantic selections"
-                                          answer)
-                  (get-boolean-preference
-                   "semantic selections"))))
-      (assuming #f
-        (meti (text "Semantic correctness")
-          (toggle (set-boolean-preference "semantic correctness"
-                                          answer)
-                  (get-boolean-preference
-                   "semantic correctness")))))))
-
-(tm-widget (math-correction-preferences-widget)
-  (bold (text "Correction"))
-  ======
-  (aligned
-    (meti (text "Remove superfluous invisible operators")
-      (toggle (set-boolean-preference
-               "manual remove superfluous invisible" answer)
-              (get-boolean-preference
-               "manual remove superfluous invisible")))
-    (meti (text "Insert missing invisible operators")
-      (toggle (set-boolean-preference
-               "manual insert missing invisible" answer)
-              (get-boolean-preference
-               "manual insert missing invisible")))
-    (meti (text "Homoglyph substitutions")
-      (toggle (set-boolean-preference
-               "manual homoglyph correct" answer)
-              (get-boolean-preference
-               "manual homoglyph correct")))))
-
-(tm-widget (math-preferences-widget)
-  (padded
-    (hlist
-      (vlist
-        (dynamic (math-keyboard-preferences-widget))
-        ====== ======
-        (dynamic (math-hints-preferences-widget))
-        (glue #f #t 0 1))
-      (glue #f #f 30 0)
-      (vlist
-        (dynamic (math-semantics-preferences-widget))
-        ====== ======
-        (dynamic (math-correction-preferences-widget))
-        (glue #f #t 0 1)))))  
-
-(tm-widget (math-preferences-widget*)
-  (dynamic (math-keyboard-preferences-widget))
-  ====== ======
-  (dynamic (math-hints-preferences-widget))
-  ====== ======
-  (dynamic (math-semantics-preferences-widget))
-  ====== ======
-  (dynamic (math-correction-preferences-widget)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Conversion preferences widget
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Html ----------
-
-(define (export-formulas-as-mathjax on?)
-  (set-boolean-preference "texmacs->html:mathjax" on?)
-  (when on?
-    (set-boolean-preference "texmacs->html:mathml" #f)
-    (set-boolean-preference "texmacs->html:images" #f)
-    (refresh-now "texmacs to html")))
-
-(define (export-formulas-as-mathml on?)
-  (set-boolean-preference "texmacs->html:mathml" on?)
-  (when on?
-    (set-boolean-preference "texmacs->html:mathjax" #f)
-    (set-boolean-preference "texmacs->html:images" #f)
-    (refresh-now "texmacs to html")))
-
-(define (export-formulas-as-images on?)
-  (set-boolean-preference "texmacs->html:images" on?)
-  (when on?
-    (set-boolean-preference "texmacs->html:mathjax" #f)
-    (set-boolean-preference "texmacs->html:mathml" #f)
-    (refresh-now "texmacs to html")))
-
-(tm-widget (html-preferences-widget)
-  ======
-  (bold (text "TeXmacs -> Html"))
-  ===
-  (refreshable "texmacs to html"
-    (aligned
-      (meti (hlist // (text "Use CSS for more advanced formatting"))
-        (toggle (set-boolean-preference "texmacs->html:css" answer)
-                (get-boolean-preference "texmacs->html:css")))
-      (meti (hlist // (text "Export mathematical formulas as MathJax"))
-        (toggle (export-formulas-as-mathjax answer)
-                (get-boolean-preference "texmacs->html:mathjax")))
-      (meti (hlist // (text "Export mathematical formulas as MathML"))
-        (toggle (export-formulas-as-mathml answer)
-                (get-boolean-preference "texmacs->html:mathml")))
-      (meti (hlist // (text "Export mathematical formulas as images"))
-        (toggle (export-formulas-as-images answer)
-                (get-boolean-preference "texmacs->html:images"))))
-    ===
-    (hlist
-      (text "CSS stylesheet:") //
-      (enum (set-preference "texmacs->html:css-stylesheet" answer)
-            '("---"
-              "https://www.texmacs.org/css/web-article.css"
-              "https://www.texmacs.org/css/web-article-dark.css"
-              "https://www.texmacs.org/css/web-article-colored.css"
-              "https://www.texmacs.org/css/web-article-dark-colored.css"
-              "")
-            (get-preference "texmacs->html:css-stylesheet") "18em")))
-  ====== ======
-  (bold (text "Html -> TeXmacs"))
-  ===
-  (refreshable "html -> texmacs"
-    (aligned
-      (meti (hlist // (text "Try to import formulas using LaTeX annotations"))
-        (toggle (set-boolean-preference
-                 "mathml->texmacs:latex-annotations" answer)
-                (get-boolean-preference
-                 "mathml->texmacs:latex-annotations"))))))
 
 ;; LaTeX ----------
 
 (define-preference-names "texmacs->latex:encoding"
-  ("cork"  "Cork with catcodes")
-  ("utf-8" "Utf-8 with inputenc"))
-
-(define (get-latex-source-tracking)
-  (or (get-boolean-preference "latex->texmacs:source-tracking")
-      (get-boolean-preference "texmacs->latex:source-tracking")))
-
-(define (set-latex-source-tracking on?)
-  (set-boolean-preference "latex->texmacs:source-tracking" on?)
-  (set-boolean-preference "texmacs->latex:source-tracking" on?)
-  (refresh-now "source-tracking"))
-
-(define (get-latex-conservative)
-  (and (get-boolean-preference "latex->texmacs:conservative")
-       (get-boolean-preference "texmacs->latex:conservative")))
-
-(define (set-latex-conservative on?)
-  (set-boolean-preference "latex->texmacs:conservative" on?)
-  (set-boolean-preference "texmacs->latex:conservative" on?)
-  (refresh-now "source-tracking"))
-
-(define (get-latex-transparent-source-tracking)
-  (or (get-boolean-preference "latex->texmacs:transparent-source-tracking")
-      (get-boolean-preference "texmacs->latex:transparent-source-tracking")))
-
-(define (set-latex-transparent-source-tracking on?)
-  (set-boolean-preference "latex->texmacs:transparent-source-tracking" on?)
-  (set-boolean-preference "texmacs->latex:transparent-source-tracking" on?))
-
-(tm-widget (latex-preferences-widget)
-  ======
-  (bold (text "LaTeX -> TeXmacs"))
-  ===
-  (aligned
-    (meti (hlist // (text "Import sophisticated objects as pictures"))
-      (toggle
-        (set-boolean-preference "latex->texmacs:fallback-on-pictures" answer)
-        (get-boolean-preference "latex->texmacs:fallback-on-pictures"))))
-  ====== ======
-  (bold (text "TeXmacs -> LaTeX"))
-  ===
-  (aligned
-    (meti (hlist // (text "Replace TeXmacs styles with no LaTeX equivalents"))
-      (toggle (set-boolean-preference "texmacs->latex:replace-style" answer)
-              (get-boolean-preference "texmacs->latex:replace-style")))
-    (meti (hlist // (text "Expand TeXmacs macros with no LaTeX equivalents"))
-      (toggle (set-boolean-preference "texmacs->latex:expand-macros" answer)
-              (get-boolean-preference "texmacs->latex:expand-macros")))
-    (meti (hlist // (text "Expand user-defined macros"))
-      (toggle (set-boolean-preference "texmacs->latex:expand-user-macros" answer)
-              (get-boolean-preference "texmacs->latex:expand-user-macros")))
-    (meti (hlist // (text "Export bibliographies as links"))
-      (toggle (set-boolean-preference "texmacs->latex:indirect-bib" answer)
-              (get-boolean-preference "texmacs->latex:indirect-bib")))
-    (meti (hlist // (text "Allow for macro definitions in preamble"))
-      (toggle (set-boolean-preference "texmacs->latex:use-macros" answer)
-              (get-boolean-preference "texmacs->latex:use-macros"))))
-  ===
-  (aligned
-    (item (text "Character encoding:")
-      (enum (set-pretty-preference "texmacs->latex:encoding" answer)
-            '("Utf-8 with inputenc" "Cork with catcodes")
-            (get-pretty-preference "texmacs->latex:encoding")
-            "15em")))
-  ====== ======
-  (bold (text "Conservative conversion options"))
-  ===
-  (refreshable "source-tracking"
-    (aligned
-      (meti (hlist // (text "Keep track of source code"))
-        (toggle
-         (set-latex-source-tracking answer)
-         (get-latex-source-tracking)))
-      (meti (hlist // (text "Only convert changes with respect to tracked version"))
-        (toggle
-         (set-latex-conservative answer)
-         (get-latex-conservative)))
-      (meti (when (get-latex-source-tracking)
-              (hlist // (text "Guarantee transparent source tracking")))
-        (when (get-latex-source-tracking)
-          (toggle
-           (set-latex-transparent-source-tracking answer)
-           (get-latex-transparent-source-tracking))))
-      (meti (when (get-latex-source-tracking)
-              (hlist // (text "Store tracking information in LaTeX files")))
-        (when (get-latex-source-tracking)
-          (toggle
-           (set-boolean-preference "texmacs->latex:attach-tracking-info" answer)
-           (get-boolean-preference "texmacs->latex:attach-tracking-info")))))))
-
-;; BibTeX ----------
-
-(define (get-bibtm-conservative)
-  (get-boolean-preference "bibtex->texmacs:conservative"))
-
-(define (set-bibtm-conservative on?)
-  (set-boolean-preference "bibtex->texmacs:conservative" on?))
-
-(define (get-tmbib-conservative)
-  (get-boolean-preference "texmacs->bibtex:conservative"))
-
-(define (set-tmbib-conservative on?)
-  (set-boolean-preference "texmacs->bibtex:conservative" on?))
-
-(tm-widget (bibtex-preferences-widget)
-  ===
-  (bold (text "BibTeX -> TeXmacs"))
-  ===
-  (aligned
-    (item (text "BibTeX command:")
-      (enum (set-pretty-preference "bibtex command" answer)
-            '("bibtex" "biber" "biblatex" "rubibtex" "")
-            (get-pretty-preference "bibtex command")
-            "15em")))
-  ===
-  (aligned
-    (meti (hlist // (text "Only convert changes when re-importing"))
-      (toggle (set-bibtm-conservative answer)
-              (get-bibtm-conservative))))
-  ====== ======
-  (bold (text "TeXmacs -> BibTeX"))
-  ===
-  (aligned
-    (meti (hlist // (text "Only convert changes with respect to imported version"))
-      (toggle (set-tmbib-conservative answer)
-              (get-tmbib-conservative)))))
+ ("cork" "Cork with catcodes")
+ ("utf-8" "Utf-8 with inputenc")
+) ;define-preference-names
 
 ;; Verbatim ----------
 
 (define-preference-names "texmacs->verbatim:encoding"
-  ("auto" "Automatic")
-  ("cork" "Cork")
-  ("iso-8859-1" "Iso-8859-1")
-  ("iso-8859-2" "Iso-8859-2")
-  ("utf-8" "UTF-8"))
+ ("auto" "Automatic")
+ ("cork" "Cork")
+ ("iso-8859-1" "ISO-8859-1")
+ ("iso-8859-2" "ISO-8859-2")
+ ("utf-8" "UTF-8")
+) ;define-preference-names
 
 (define-preference-names "verbatim->texmacs:encoding"
-  ("utf-8" "UTF-8")
-  ("auto" "Automatic")
-  ("cork" "Cork")
-  ("iso-8859-1" "ISO-8859-1")
-  ("iso-8859-2" "ISO-8859-2"))
-
-(tm-widget (verbatim-preferences-widget)
-  ======
-  (bold (text "TeXmacs -> Verbatim"))
-  ===
-  (aligned
-    (meti (hlist // (text "Use line wrapping for lines which are longer than 80 characters"))
-      (toggle (set-boolean-preference "texmacs->verbatim:wrap" answer)
-              (get-boolean-preference "texmacs->verbatim:wrap"))))
-  ===
-  (aligned
-    (item (text "Character encoding:")
-      (enum (set-pretty-preference "texmacs->verbatim:encoding" answer)
-            '("Automatic" "Cork" "ISO-8859-1" "ISO-8859-2" "UTF-8")
-            (get-pretty-preference "texmacs->verbatim:encoding")
-            "12em")))
-  ====== ======
-  (bold (text "Verbatim -> TeXmacs"))
-  ===
-  (aligned
-    (meti (hlist // (text "Merge lines into paragraphs unless separated by blank lines"))
-      (toggle (set-boolean-preference "verbatim->texmacs:wrap" answer)
-              (get-boolean-preference "verbatim->texmacs:wrap"))))
-  ===
-  (aligned
-    (item (text "Character encoding:")
-      (enum (set-pretty-preference "verbatim->texmacs:encoding" answer)
-            '("UTF-8" "Automatic" "Cork" "ISO-8859-1" "ISO-8859-2")
-            (get-pretty-preference "verbatim->texmacs:encoding")
-            "12em"))))
+ ("utf-8" "UTF-8")
+ ("auto" "Automatic")
+ ("cork" "Cork")
+ ("iso-8859-1" "ISO-8859-1")
+ ("iso-8859-2" "ISO-8859-2")
+) ;define-preference-names
 
 ;; Pdf ----------
+
 (define-preference-names "texmacs->pdf:version"
-  ("Default" "default")
-  ("1.4" "1.4")
-  ("1.5" "1.5")
-  ("1.6" "1.6")
-  ("1.7" "1.7"))
-
-(tm-widget (pdf-preferences-widget)
-  ======
-  (bold (text "TeXmacs -> Pdf/Postscript"))
-  ===
-  (aligned
-    (meti (hlist // (text "Expand beamer slides"))
-      (toggle (set-boolean-preference "texmacs->pdf:expand slides" answer)
-              (get-boolean-preference "texmacs->pdf:expand slides")))
-    (meti (hlist // (text "Use external pdf viewer"))
-      (toggle (set-boolean-preference "use external pdf viewer" answer)
-              (get-boolean-preference "use external pdf viewer"))))
-  (assuming (supports-native-pdf?)
-    (aligned
-      (item (text "Pdf version number:")
-        (enum (set-preference "texmacs->pdf:version" answer)
-              '("default" "1.4" "1.5" "1.6" "1.7")
-              (get-preference "texmacs->pdf:version") "12em")))))
-
-;; Images ----------
-
-(define (pretty-format-list)
-  (let* ((desired-image-format-list '(("svg" "Svg")  ("eps" "Eps")
-           ("png" "Png")("tif" "Tiff") ("jpg" "Jpeg") ("pdf" "Pdf")))
-         (valid-image-format-list 
-           (filter (lambda (x) (file-converter-exists? "x.pdf" (string-append "x." (car x))))
-             desired-image-format-list)))
-   (eval `(define-preference-names "texmacs->image:format" ,@valid-image-format-list))
-   (cadr (apply map list valid-image-format-list))))
-
-(tm-widget (image-preferences-widget)
-  ======
-  (bold (text "TeXmacs -> Image"))
-  ===
-  (aligned
-    (item (text "Bitmap export resolution (dpi):")
-      (enum (set-preference "texmacs->image:raster-resolution" answer)
-            '("1200" "600" "300" "150" "")
-            (get-preference "texmacs->image:raster-resolution")
-            "8em"))
-    (item (text "Clipboard image format:")
-      (enum (set-pretty-preference "texmacs->image:format" answer)
-            (pretty-format-list)
-            (get-pretty-preference "texmacs->image:format")
-            "8em"))))
-
-;; Mogan Scheme ----------
-
-(tm-widget (mogan-scheme-preferences-widget)
-  ======
-  (bold (text "TeXmacs -> Mogan Scheme"))
-  ===
-  (aligned
-    (meti (hlist // (text "Use the Formatted Mogan Scheme"))
-      (toggle (set-boolean-preference "texmacs->mgs:formatted" answer)
-              (get-boolean-preference "texmacs->mgs:formatted")))))
-
-;; All converters ----------
-
-(tm-widget (conversion-preferences-widget)
-  ===
-  (padded
-    (tabs
-      (tab (text "Html")
-        (centered
-          (dynamic (html-preferences-widget))))
-      (tab (text "LaTeX")
-        (centered
-          (dynamic (latex-preferences-widget))))
-      (tab (text "BibTeX")
-        (centered
-          (dynamic (bibtex-preferences-widget))))
-      (tab (text "Verbatim")
-        (centered
-          (dynamic (verbatim-preferences-widget))))
-      (assuming (or (supports-native-pdf?) (supports-ghostscript?))
-        (tab (text "Pdf")
-          (centered
-            (dynamic (pdf-preferences-widget)))))
-      (tab (text "Image")
-        (centered
-          (dynamic (image-preferences-widget))))
-      (tab (text "Mogan Scheme")
-        (centered
-          (dynamic (mogan-scheme-preferences-widget))))))
-  ===)
+ ("default" "default")
+ ("1.4" "1.4")
+ ("1.5" "1.5")
+ ("1.6" "1.6")
+ ("1.7" "1.7")
+) ;define-preference-names
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Other
+;; Other tab 的编解码表（autosave / security / updater / scripting）
+;; （updater last-check 等 helper 见 preferences-tools.scm）
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define autosave-enabled-label "On")
-(define autosave-disabled-label "Off")
-
-(tm-define (autosave-preferences-list)
-  (list autosave-enabled-label autosave-disabled-label))
-
-(tm-define (get-autosave-preference-label)
-  (if (== (get-preference "autosave") "0")
-      autosave-disabled-label
-      autosave-enabled-label))
-
-(tm-define (set-autosave-preference-label label)
-  (set-preference "autosave"
-                  (if (== label autosave-disabled-label) "0" "120")))
-
-(define-preference-names "autosave"
-  ("120" "On")
-  ("0" "Off"))
+(define-preference-names "autosave" ("120" "On") ("0" "Off"))
 
 (define-preference-names "security"
-  ("accept no scripts" "Accept no scripts")
-  ("prompt on scripts" "Prompt on scripts")
-  ("accept all scripts" "Accept all scripts"))
-
-(define-preference-names "updater:interval"
-  ("0" "Never")
-  ("0" "Unsupported")
-  ("24" "Once a day")
-  ("168" "Once a week")
-  ("720" "Once a month"))
+ ("accept no scripts" "Accept no scripts")
+ ("prompt on scripts" "Prompt on scripts")
+ ("accept all scripts" "Accept all scripts")
+) ;define-preference-names
 
 (define-preference-names "document update times"
-  ("1" "Once")
-  ("2" "Twice")
-  ("3" "Three times"))
+ ("1" "Once")
+ ("2" "Twice")
+ ("3" "Three times")
+) ;define-preference-names
 
-(define-preference-names "scripting language"
-  ("none" "None"))
+(define-preference-names "scripting language" ("none" "None"))
 
-(define (updater-last-check-formatted)
-  "Time since last update check formatted for use in the preferences dialog"
-  (with c (updater-last-check)
-    (if (<= c 0) 
-        "Never"
-        (with h (ceiling (/ (- (current-time) c) 3600))
-          (cond ((< h 24) (replace "Less than %1 hour(s) ago" h))
-                ((< h 720) (replace "%1 days ago" (ceiling (/ h 24))))
-                (else (translate "More than 1 month ago")))))))
+(define-preference-names "update-channel" ("stable" "Stable") ("beta" "Beta"))
 
-(define (last-check-string)
-  (if (use-plugin-updater?)
-      (updater-last-check-formatted)
-      "Never (unsupported)"))
+(tm-define (open-preferences) (:interactive #t) (cpp-preferences-dialog))
 
-(define (automatic-checks-choices)
-  (if (use-plugin-updater?)
-      '("Never" "Once a day" "Once a week" "Once a month")
-      '("Unsupported")))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; QML facade：preferences-qml-meta / -submit / -set-field
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(tm-define (scripts-preferences-list)
-  (lazy-plugin-force)
-  (with l (scripts-list)
-    (for (x l) (set-preference-name "scripting language" x (scripts-name x)))
-    (cons "None" (map scripts-name l))))
+;; 字段定义数据格式（紧凑、一眼可见选项列表；参考 paragraph-format-widgets.scm
+;; 的 paragraph-basic-fields 顶部 define 模式）：
+;;   (key label options options-pretty editable? . flags)
+;;
+;; key          —— 偏好键（内部存储形；走 pref-keys.scm 的 pref-* proc 引用，单一可信源）
+;; label        —— 显示文案（Cork 编码的原文；meta 输出时经 translate 包装；不在这里预翻译——
+;;                 field->descriptor 统一包装，避免翻译漏包 + 与 paragraph-format 一致）
+;; options      —— 内部键列表（combo 专用）
+;; options-pretty—— 翻译显示列表，与 options 等长同序（combo；空则回退显示 options 原文）
+;; editable?    —— 是否允许双击进入可编辑输入态（combo 专用；toggle/info 忽略）
+;; flags        —— 可选 plist：restart? / radio-group / enabled-when-key + enabled-when-val /
+;;                 group / hint / column（见顶部契约文档）
+;;
+;; kind 分流（combo / toggle / info）由 options 是否非空决定：
+;;   有 options / options-pretty -> combo（下拉）
+;;   无 options（且 key 非空）  -> toggle（开关；value 为 "on"/"off"）
+;;   key 为空                  -> info（只读展示行；无 setter、无 diff）
+;;
+;; flag plist 约定（参考 ParagraphFormat 的 meta 输出）：
+;;   restart?      布尔——需重启字段（提交时先确认再 apply）
+;;   radio-group   字符串——组内互斥（toggle；如 mathjax/mathml/images -> "html-formula-export"）
+;;   enabled-when-key + enabled-when-val   条件锁定（依赖键取此值时本字段可勾，否则锁定灰显）
+;;   group         字符串——分组标题（组首字段上发）
+;;   hint          字符串——副说明
+;;   column        整数——双栏布局列号 0/1（Math / experimental Other）
 
-(tm-widget (script-preferences-widget)
-  (aligned
-    (item (text "Execution of scripts:")
-      (enum (set-pretty-preference "security" answer)
-            '("Accept no scripts" "Prompt on scripts" "Accept all scripts")
-            (get-pretty-preference "security")
-            "15em"))))
+;; 需重启字段的内部键集合（固定）：look and feel / gui theme / language /
+;; keyboard shortcut style。与 set-pretty-preference* 调用点一致。
+;; 注：magic-paste-shortcut 自 [0853] 起改为 set-pretty-preference（无需重启），故不在此列。
 
-(tm-widget (security-preferences-widget)
-  (refreshable "security-preferences-refresher"
-    (padded
-      ======
-      (bold (text "Wallet"))
-      ===
-      (dynamic (wallet-preferences-widget))
-      ====== ======
-      (bold (text "Encryption"))
-      ===
-      (dynamic (gpg-preferences-widget))
-      ;;====== ======
-      ;;(bold (text "Scripts")) 
-      ;;===
-      ;;(dynamic (script-preferences-widget))
-      )))
+(define preferences-qml-restart-keys
+  (list "look and feel" "gui theme" "language" "keyboard shortcut style")
+) ;define
 
-(tm-widget (misc-preferences-widget)
-  (aligned
-    (item (text "Automatically save:")
-      (enum (set-autosave-preference-label answer)
-            (autosave-preferences-list)
-            (get-autosave-preference-label)
-            "12em"))
-    (item (text "Auto backup:")
-      (hlist
-        (enum (set-preference "autobackup" (string-downcase answer))
+;; emoji keyboard 方向相关：开启时 notify 实时注册 kbd-map 无需重启；
+;; 关闭后已注册绑定当次会话仍在，需重启才不再生效。
+
+(define (preferences-qml-restart-relevant? key changed-assoc)
+  (if (or (member key preferences-qml-restart-keys)
+        (and (== key (pref-keyboard-emoji-keyboard))
+          (== (cdr (assoc key changed-assoc)) "off")
+        ) ;and
+      ) ;or
+    #t
+    #f
+  ) ;if
+) ;define
+
+;; ---- hint 文案（英文 key，供 translate 查翻译表） ----
+;; 集中管理避免散落重复；facade preferences-qml-flags->assoc 对 hint 过 translate。
+
+(define (hint-semantic-editing-only)
+  "Enabled only when semantic editing is on"
+) ;define
+
+(define (hint-source-tracking-only)
+  "Enabled only when source tracking is on"
+) ;define
+
+(define (hint-toggling-refreshes)
+  "Toggling enables related fields"
+) ;define
+
+(define (hint-mutex-mathml-images)
+  "Mutually exclusive with MathML / images"
+) ;define
+
+(define (hint-mutex-mathjax-images)
+  "Mutually exclusive with MathJax / images"
+) ;define
+
+(define (hint-mutex-mathjax-mathml)
+  "Mutually exclusive with MathJax / MathML"
+) ;define
+
+(define (hint-linked-both-directions)
+  "Linked in both directions"
+) ;define
+
+(define (hint-macos-only)
+  "macOS only"
+) ;define
+
+(define (hint-qt-only)
+  "qt only"
+) ;define
+
+;; ---- General fields ----
+
+(define preferences-qml-general-fields
+  (list
+    ;; look and feel 选项按平台过滤（field->descriptor 时按平台谓词裁剪 options/options-pretty）。
+    (list (pref-general-look-and-feel)
+      "Look and feel"
+      '("default" "emacs" "gnome" "kde" "macos" "windows")
+      '("Default" "Emacs" "Gnome" "KDE" "macOS" "Windows")
+      #f
+      'restart?
+      #t
+      'platform-filter
+      'look-and-feel
+    ) ;list
+    (list (pref-general-language)
+      "User interface language"
+      '()
+      '()
+      #f
+      'restart?
+      #t
+      'language-options
+    ) ;list
+    (list (pref-general-complex-actions)
+      "Complex actions"
+      '("menus" "popups")
+      '("Through the menus" "Through popup windows")
+      #f
+    ) ;list
+    (list (pref-general-interactive-questions)
+      "Interactive questions"
+      '("footer" "popup")
+      '("On the footer" "In popup windows")
+      #f
+    ) ;list
+    (list (pref-general-detailed-menus)
+      "Details in menus"
+      '("simple" "detailed")
+      '("Simplified menus" "Detailed menus")
+      #f
+    ) ;list
+    (list (pref-general-buffer-management)
+      "Buffer management"
+      '("separate" "shared")
+      '("Documents in separate windows" "Multiple documents share window")
+      #f
+    ) ;list
+    (list (pref-general-gui-theme)
+      "User interface theme"
+      '("liii" "liii-night")
+      '("Liii" "Liii Dark")
+      #f
+      'restart?
+      #t
+    ) ;list
+    (list (pref-general-completion-style)
+      "Completion style"
+      '("popup" "inline")
+      '("Popup" "Inline")
+      #f
+    ) ;list
+    (list (pref-general-magic-paste-shortcut)
+      "Magic paste shortcut"
+      '("ctrl+shift+v" "ctrl+v")
+      ;; magic-paste 的 options-pretty 随平台变（macOS Cmd+ / 其它 Ctrl+）。
+      (if (os-macos?) '("Cmd+Shift+V" "Cmd+V") '("Ctrl+Shift+V" "Ctrl+V"))
+      #f
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Keyboard fields ----
+
+(define preferences-qml-keyboard-fields
+  (list (list (pref-keyboard-text-spacebar)
+          "Space bar in text mode"
+          '("default" "allow multiple spaces" "glue multiple spaces"
+            "no multiple spaces")
+          '("Default" "Allow multiple spaces" "Glue multiple spaces"
+            "No multiple spaces")
+          #f
+          'group
+          "Keyboard behavior"
+        ) ;list
+    (list (pref-keyboard-math-spacebar)
+      "Space bar in math mode"
+      '("default" "allow spurious spaces" "avoid spurious spaces"
+        "no spurious spaces")
+      '("Default" "Allow spurious spaces" "Avoid spurious spaces"
+        "No spurious spaces")
+      #f
+    ) ;list
+    (list (pref-keyboard-automatic-quotes)
+      "Automatic quotes"
+      '("default" "none" "dutch" "english" "french" "german" "spanish" "swiss")
+      '("Default" "Disabled" "Dutch" "English" "French" "German" "Spanish"
+        "Swiss")
+      #f
+    ) ;list
+    (list (pref-keyboard-automatic-brackets)
+      "Automatic brackets"
+      '("off" "mathematics" "on")
+      '("Disabled" "Inside mathematics" "Enabled")
+      #f
+    ) ;list
+    (list (pref-keyboard-cyrillic-input-method)
+      "Cyrillic input method"
+      '("none" "translit" "jcuken" "yawerty")
+      '("None" "Translit" "Jcuken" "Yawerty")
+      #f
+    ) ;list
+    (list (pref-keyboard-emoji-keyboard)
+      "Emoji shortcuts"
+      '("off" "on")
+      '("Disabled" "Enabled")
+      #f
+    ) ;list
+    ;; keyboard shortcut style 仅 macOS（field->descriptor 按平台谓词过滤）。
+    (list (pref-general-keyboard-shortcut-style)
+      "Keyboard shortcut style"
+      '("text" "symbol")
+      '("Text" "Symbol")
+      #f
+      'restart?
+      #t
+      'platform-filter
+      'macos-only
+    ) ;list
+    ;; IR combos（editable：用户可双击进入编辑态键入预设外的自定义键名，或清空）。
+    ;; 左右两列双栏（layout 'two-col）：Left/Right/Up/Down 左列（column 0），
+    ;; Center/Play/Pause/Menu 右列（column 1）。
+    (list (pref-ir-left)
+      "Left"
+      '("pageup" "home" "up")
+      '("PageUp" "Home" "Up")
+      #t
+      'group
+      "Remote controllers with keyboard simulation"
+      'group-span
+      #t
+      'layout
+      'two-col
+      'column
+      0
+    ) ;list
+    (list (pref-ir-right)
+      "Right"
+      '("pagedown" "end" "down")
+      '("PageDown" "End" "Down")
+      #t
+      'layout
+      'two-col
+      'column
+      0
+    ) ;list
+    (list (pref-ir-up)
+      "Up"
+      '("home" "pageup" "up")
+      '("Home" "PageUp" "Up")
+      #t
+      'layout
+      'two-col
+      'column
+      0
+    ) ;list
+    (list (pref-ir-down)
+      "Down"
+      '("end" "pagedown" "down")
+      '("End" "PageDown" "Down")
+      #t
+      'layout
+      'two-col
+      'column
+      0
+    ) ;list
+    (list (pref-ir-center)
+      "Center"
+      '("S-return" "return" "space")
+      '("S-Return" "Return" "Space")
+      #t
+      'layout
+      'two-col
+      'column
+      1
+    ) ;list
+    (list (pref-ir-play)
+      "Play"
+      '("F5" "F6" "F7")
+      '("F5" "F6" "F7")
+      #t
+      'layout
+      'two-col
+      'column
+      1
+    ) ;list
+    (list (pref-ir-pause)
+      "Pause"
+      '("escape" "space" "F5")
+      '("Escape" "Space" "F5")
+      #t
+      'layout
+      'two-col
+      'column
+      1
+    ) ;list
+    (list (pref-ir-menu)
+      "Menu"
+      '("." "," "menu")
+      '("." "," "Menu")
+      #t
+      'layout
+      'two-col
+      'column
+      1
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Math fields（纯 toggles，单栏；分组顺序对齐原 tm-widget：
+;;      Keyboard -> Contextual hints -> Semantics -> Correction） ----
+
+(define preferences-qml-math-fields
+  (list
+    ;; Keyboard
+    (list (pref-math-use-large-brackets)
+      "Use extensible brackets"
+      '()
+      '()
+      #f
+      'group
+      "Keyboard"
+    ) ;list
+    ;; Contextual hints
+    (list (pref-math-show-full-context)
+      "Show full context"
+      '()
+      '()
+      #f
+      'group
+      "Contextual hints"
+    ) ;list
+    (list (pref-math-show-table-cells) "Show table cells" '() '() #f)
+    (list (pref-math-show-focus) "Show focus" '() '() #f)
+    (list (pref-math-show-only-semantic-focus)
+      "Show only semantic focus"
+      '()
+      '()
+      #f
+      'hint
+      (hint-semantic-editing-only)
+      'enabled-when-key
+      (pref-math-semantic-editing)
+      'enabled-when-val
+      "on"
+    ) ;list
+    ;; Semantics
+    (list (pref-math-semantic-editing)
+      "Semantic editing"
+      '()
+      '()
+      #f
+      'group
+      "Semantics"
+      'hint
+      (hint-toggling-refreshes)
+    ) ;list
+    (list (pref-math-semantic-selections)
+      "Semantic selections"
+      '()
+      '()
+      #f
+      'hint
+      (hint-semantic-editing-only)
+      'enabled-when-key
+      (pref-math-semantic-editing)
+      'enabled-when-val
+      "on"
+    ) ;list
+    (list (pref-math-semantic-correctness) "Semantic correctness" '() '() #f)
+    ;; Correction
+    (list (pref-math-manual-remove-superfluous-invisible)
+      "Remove superfluous invisible"
+      '()
+      '()
+      #f
+      'group
+      "Correction"
+    ) ;list
+    (list (pref-math-manual-insert-missing-invisible)
+      "Insert missing invisible"
+      '()
+      '()
+      #f
+    ) ;list
+    (list (pref-math-manual-homoglyph-correct) "Homoglyph correct" '() '() #f)
+  ) ;list
+) ;define
+
+;; ---- Convert / Html fields ----
+
+(define preferences-qml-convert-html-fields
+  (list
+    ;; TeXmacs → Html
+    (list (pref-convert-html-css)
+      "Use CSS for more advanced formatting"
+      '()
+      '()
+      #f
+      'group
+      "TeXmacs → Html"
+    ) ;list
+    ;; Export formulas as（radio 互斥组——mathjax / mathml / images 三选一）。
+    (list (pref-convert-html-mathjax)
+      "Export formulas as MathJax"
+      '()
+      '()
+      #f
+      'hint
+      (hint-mutex-mathml-images)
+      'radio-group
+      "html-formula-export"
+    ) ;list
+    (list (pref-convert-html-mathml)
+      "Export formulas as MathML"
+      '()
+      '()
+      #f
+      'hint
+      (hint-mutex-mathjax-images)
+      'radio-group
+      "html-formula-export"
+    ) ;list
+    (list (pref-convert-html-images)
+      "Export formulas as images"
+      '()
+      '()
+      #f
+      'hint
+      (hint-mutex-mathjax-mathml)
+      'radio-group
+      "html-formula-export"
+    ) ;list
+    (list (pref-convert-html-css-stylesheet)
+      "CSS stylesheet"
+      '("---" "https://www.texmacs.org/css/web-article.css"
+        "https://www.texmacs.org/css/web-article-dark.css"
+        "https://www.texmacs.org/css/web-article-colored.css"
+        "https://www.texmacs.org/css/web-article-dark-colored.css")
+      '("---" "https://www.texmacs.org/css/web-article.css"
+        "https://www.texmacs.org/css/web-article-dark.css"
+        "https://www.texmacs.org/css/web-article-colored.css"
+        "https://www.texmacs.org/css/web-article-dark-colored.css")
+      #t
+    ) ;list
+    ;; Html → TeXmacs
+    (list (pref-convert-html-mathml-latex-annotations)
+      "Try to import formulas using LaTeX annotations"
+      '()
+      '()
+      #f
+      'group
+      "Html → TeXmacs"
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Convert / LaTeX fields ----
+
+(define preferences-qml-convert-latex-fields
+  (list
+    ;; LaTeX → TeXmacs
+    (list (pref-convert-latex-fallback-on-pictures)
+      "Import sophisticated objects as pictures"
+      '()
+      '()
+      #f
+      'group
+      "LaTeX → TeXmacs"
+    ) ;list
+    ;; TeXmacs → LaTeX
+    (list (pref-convert-latex-replace-style)
+      "Replace TeXmacs styles with no LaTeX equivalents"
+      '()
+      '()
+      #f
+      'group
+      "TeXmacs → LaTeX"
+    ) ;list
+    (list (pref-convert-latex-expand-macros)
+      "Expand TeXmacs macros with no LaTeX equivalents"
+      '()
+      '()
+      #f
+    ) ;list
+    (list (pref-convert-latex-expand-user-macros)
+      "Expand user-defined macros"
+      '()
+      '()
+      #f
+    ) ;list
+    (list (pref-convert-latex-indirect-bib)
+      "Export bibliographies as links"
+      '()
+      '()
+      #f
+    ) ;list
+    (list (pref-convert-latex-use-macros)
+      "Allow for macro definitions in preamble"
+      '()
+      '()
+      #f
+    ) ;list
+    (list (pref-convert-latex-encoding)
+      "Character encoding"
+      '("utf-8" "cork")
+      '("Utf-8 with inputenc" "Cork with catcodes")
+      #f
+    ) ;list
+    ;; Conservative conversion options——source-tracking 开关联动
+    ;; （统一展示键 "latex:source-tracking" 读 OR / 写双向；由 set-field 路由）。
+    (list "latex:source-tracking"
+      "Keep track of source code"
+      '()
+      '()
+      #f
+      'group
+      "Conservative conversion options"
+    ) ;list
+    (list "latex:conservative"
+      "Only convert changes with respect to tracked version"
+      '()
+      '()
+      #f
+      'hint
+      (hint-linked-both-directions)
+    ) ;list
+    (list "latex:transparent-source-tracking"
+      "Guarantee transparent source tracking"
+      '()
+      '()
+      #f
+      'hint
+      (hint-source-tracking-only)
+      'enabled-when-key
+      "latex:source-tracking"
+      'enabled-when-val
+      "on"
+    ) ;list
+    (list (pref-convert-latex-attach-tracking-info)
+      "Store tracking information in LaTeX files"
+      '()
+      '()
+      #f
+      'hint
+      (hint-source-tracking-only)
+      'enabled-when-key
+      "latex:source-tracking"
+      'enabled-when-val
+      "on"
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Convert / BibTeX fields ----
+
+(define preferences-qml-convert-bibtex-fields
+  (list
+    ;; BibTeX → TeXmacs
+    (list (pref-convert-bibtex-command)
+      "BibTeX command"
+      '("bibtex" "biber" "biblatex" "rubibtex")
+      '("bibtex" "biber" "biblatex" "rubibtex")
+      #t
+      'group
+      "BibTeX → TeXmacs"
+    ) ;list
+    (list (pref-convert-bibtex-import-conservative)
+      "Only convert changes when re-importing"
+      '()
+      '()
+      #f
+    ) ;list
+    ;; TeXmacs → BibTeX
+    (list (pref-convert-bibtex-export-conservative)
+      "Only convert changes with respect to imported version"
+      '()
+      '()
+      #f
+      'group
+      "TeXmacs → BibTeX"
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Convert / Verbatim fields ----
+
+(define preferences-qml-convert-verbatim-fields
+  (list
+    ;; TeXmacs → Verbatim
+    (list (pref-convert-verbatim-export-wrap)
+      "Line wrap for lines longer than 80 characters"
+      '()
+      '()
+      #f
+      'group
+      "TeXmacs → Verbatim"
+    ) ;list
+    (list (pref-convert-verbatim-export-encoding)
+      "Character encoding"
+      '("auto" "cork" "iso-8859-1" "iso-8859-2" "utf-8")
+      '("Automatic" "Cork" "ISO-8859-1" "ISO-8859-2" "UTF-8")
+      #f
+    ) ;list
+    ;; Verbatim → TeXmacs
+    (list (pref-convert-verbatim-import-wrap)
+      "Merge lines into paragraphs unless blank-line separated"
+      '()
+      '()
+      #f
+      'group
+      "Verbatim → TeXmacs"
+    ) ;list
+    (list (pref-convert-verbatim-import-encoding)
+      "Character encoding"
+      '("utf-8" "auto" "cork" "iso-8859-1" "iso-8859-2")
+      '("UTF-8" "Automatic" "Cork" "ISO-8859-1" "ISO-8859-2")
+      #f
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Convert / Pdf fields ----
+
+(define preferences-qml-convert-pdf-fields
+  (list
+    ;; TeXmacs → Pdf / Postscript
+    (list (pref-convert-pdf-expand-slides)
+      "Expand beamer slides"
+      '()
+      '()
+      #f
+      'group
+      "TeXmacs → Pdf / Postscript"
+    ) ;list
+    (list (pref-use-external-pdf-viewer) "Use external pdf viewer" '() '() #f)
+    ;; pdf version number 字段仅启用原生 PDF 时可见（supports-native-pdf?）。
+    (list (pref-convert-pdf-version)
+      "Pdf version number"
+      '("default" "1.4" "1.5" "1.6" "1.7")
+      '("default" "1.4" "1.5" "1.6" "1.7")
+      #f
+      'platform-filter
+      'native-pdf-only
+    ) ;list
+  ) ;list
+) ;define
+
+;; ---- Convert / Image fields ----
+
+(define preferences-qml-convert-image-fields
+  (list
+    ;; TeXmacs → Image
+    (list (pref-convert-image-raster-resolution)
+      "Bitmap export resolution (dpi)"
+      '("1200" "600" "300" "150")
+      '("1200" "600" "300" "150")
+      #t
+      'group
+      "TeXmacs → Image"
+    ) ;list
+    ;; 剪贴板图片格式：options 动态按 file-converter-exists? 过滤（副作用——见 pretty-format-list）。
+    ;; field->descriptor 在调用时拉取（options / options-pretty 同源，保证等长同序）。
+    (list (pref-convert-image-format) "Clipboard image format" '() '() #f)
+  ) ;list
+) ;define
+
+;; ---- Other / Misc fields ----
+
+(define preferences-qml-other-misc-fields
+  (append (list (list (pref-autosave)
+                  "Automatically save"
+                  '("120" "0")
+                  '("On" "Off")
+                  #f
+                  'group
+                  "Miscellaneous preferences"
+                ) ;list
+            (list (pref-autobackup)
+              "Auto backup"
+              '("on" "off")
               '("On" "Off")
-              (tmstring-upcase-first (get-preference "autobackup"))
-              "12em")
-        //                                     
-        (explicit-buttons
-          ((eval (auto-backup-button-label))
-           (open-auto-backup-location)))))
-    (item (text "Security:")
-      (enum (set-pretty-preference "security" answer)
-            '("Accept no scripts" "Prompt on scripts" "Accept all scripts")
-            (get-pretty-preference "security")
-            "12em"))
-    (item (text "Scripting language:")
-      (enum (set-pretty-preference "scripting language" answer)
-            (scripts-preferences-list)
-            (get-pretty-preference "scripting language")
-            "12em"))
-    (item (text "Document updates run:")
-      (enum (set-pretty-preference "document update times" answer)
-            '("Once" "Twice" "Three times")
-            (get-pretty-preference "document update times") 
-            "12em"))
-    (assuming (use-plugin-updater?)
-      (item (text "Check for automatic updates:")
-        (enum (set-pretty-preference "updater:interval" answer)
-              (automatic-checks-choices)
-              (get-pretty-preference "updater:interval")
-              "12em")))
-    (assuming (use-plugin-updater?)
-      (item (text "Last check:") (text (last-check-string))))))
+              #f
+              'action-button
+              'open-auto-backup-location
+            ) ;list
+            (list (pref-security)
+              "Security"
+              '("accept no scripts" "prompt on scripts" "accept all scripts")
+              '("Accept no scripts" "Prompt on scripts" "Accept all scripts")
+              #f
+            ) ;list
+            ;; scripting language 的 options 动态按 scripts-list（lazy-plugin-force 副作用）。
+            ;; field->descriptor 在调用时拉取 options / options-pretty。
+            (list (pref-scripting-language) "Scripting language" '() '() #f)
+            (list (pref-document-update-times)
+              "Document updates run"
+              '("1" "2" "3")
+              '("Once" "Twice" "Three times")
+              #f
+            ) ;list
+          ) ;list
+    ;; 更新通道（Stable/Beta 单选 combo）：真实存储单值 update-channel,
+    ;; 写值经 set-field 特例路由到 updater-switch-channel 的两次确认。
+    ;; 仅 Velopack 更新器平台（Windows 安装版）显示。
+    (if (use-plugin-updater?)
+      (list (list (pref-update-channel)
+              "Update channel"
+              '("stable" "beta")
+              '("Stable" "Beta")
+              #f
+            ) ;list
+      ) ;list
+      '()
+    ) ;if
+  ) ;append
+) ;define
 
-(tm-widget (experimental-preferences-widget)
-  (hlist
-    (aligned
-      (meti (hlist // (text "Fast environments"))
-        (toggle (set-boolean-preference "fast environments" answer)
-                (get-boolean-preference "fast environments")))
-      (meti (hlist // (text "Alpha transparency"))
-        (toggle (set-boolean-preference "experimental alpha" answer)
-                (get-boolean-preference "experimental alpha")))
-      (meti (hlist // (text "New style page breaking"))
-        (toggle (set-boolean-preference "new style page breaking" answer)
-                (get-boolean-preference "new style page breaking")))
-      (meti (hlist // (text "Encryption"))
-        (toggle (set-boolean-preference "experimental encryption" answer)
-                (get-boolean-preference "experimental encryption")))
-      (assuming (os-macos?)
-        (meti (hlist // (text "Use native menubar"))
-          (toggle (set-boolean-preference "use native menubar" answer)
-                  (get-boolean-preference "use native menubar"))))
-      (assuming (os-macos?)
-          (meti (hlist // (text "Use unified toolbars"))
-            (toggle (set-boolean-preference "use unified toolbar" answer)
-                    (get-boolean-preference "use unified toolbar")))))
-    /// ///
-    (aligned
-      (meti (hlist // (text "Program bracket matching"))
-        (toggle (set-boolean-preference "prog:highlight brackets" answer)
-                (get-boolean-preference "prog:highlight brackets")))
-      (meti (hlist // (text "Automatic program brackets"))
-        (toggle (set-boolean-preference "prog:automatic brackets" answer)
-                (get-boolean-preference "prog:automatic brackets")))
-      (meti (hlist // (text "Program bracket selections"))
-        (toggle (set-boolean-preference "prog:select brackets" answer)
-                (get-boolean-preference "prog:select brackets")))
-      (meti (hlist // (text "Case-insensitive search"))
-        (toggle (set-boolean-preference "case-insensitive-match" answer)
-                (get-boolean-preference "case-insensitive-match")))
-      (assuming (qt-gui?)  ; TODO: recode the dialogue in scheme
-        (meti (hlist // (text "Use print dialogue"))
-          (toggle (set-boolean-preference "gui:print dialogue" answer)
-                  (get-boolean-preference "gui:print dialogue"))))
-      (meti (hlist // (text "Use fonts in texlive"))
-        (toggle (set-boolean-preference "texlive:fonts" answer)
-                (get-boolean-preference "texlive:fonts"))))))
+;; ---- Other / Experimental fields（双栏 toggles，带平台条件过滤） ----
 
-(tm-widget (experimental-preferences-widget*)
-  (aligned
-    (meti (hlist // (text "Encryption"))
-      (toggle (set-boolean-preference "experimental encryption" answer)
-              (get-boolean-preference "experimental encryption")))
-    (meti (hlist // (text "Fast environments"))
-      (toggle (set-boolean-preference "fast environments" answer)
-              (get-boolean-preference "fast environments")))
-    ;;(meti (hlist // (text "Alpha transparency"))
-    ;;  (toggle (set-boolean-preference "experimental alpha" answer)
-    ;;          (get-boolean-preference "experimental alpha")))
-    (meti (hlist // (text "New style page breaking"))
-      (toggle (set-boolean-preference "new style page breaking" answer)
-              (get-boolean-preference "new style page breaking")))
-    (meti (hlist // (text "Program bracket matching"))
-      (toggle (set-boolean-preference "prog:highlight brackets" answer)
-              (get-boolean-preference "prog:highlight brackets")))
-    (meti (hlist // (text "Automatic program brackets"))
-      (toggle (set-boolean-preference "prog:automatic brackets" answer)
-              (get-boolean-preference "prog:automatic brackets")))
-    (meti (hlist // (text "Program bracket selections"))
-      (toggle (set-boolean-preference "prog:select brackets" answer)
-              (get-boolean-preference "prog:select brackets")))
-    ;;(meti (hlist // (text "Case-insensitive search"))
-    ;;  (toggle (set-boolean-preference "case-insensitive-match" answer)
-    ;;          (get-boolean-preference "case-insensitive-match")))
-    (assuming (qt-gui?)  ; TODO: recode the dialogue in scheme
-      (meti (hlist // (text "Use print dialogue"))
-        (toggle (set-boolean-preference "gui:print dialogue" answer)
-                (get-boolean-preference "gui:print dialogue"))))
-    (assuming (os-macos?)
-      (meti (hlist // (text "Use native menubar"))
-        (toggle (set-boolean-preference "use native menubar" answer)
-                (get-boolean-preference "use native menubar")))
-      (meti (hlist // (text "Use unified toolbars"))
-        (toggle (set-boolean-preference "use unified toolbar" answer)
-                (get-boolean-preference "use unified toolbar"))))))
+(define preferences-qml-other-experimental-fields
+  (append (list
+            ;; 双栏布局（layout 'two-col）：左栏 column 0、右栏 column 1。
+            (list (pref-experimental-fast-environments)
+              "Fast environments"
+              '()
+              '()
+              #f
+              'group
+              "Experimental features (to be used with care)"
+              'group-span
+              #t
+              'layout
+              'two-col
+              'column
+              0
+            ) ;list
+            (list (pref-experimental-alpha)
+              "Alpha transparency"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              0
+            ) ;list
+            (list (pref-experimental-new-style-page-breaking)
+              "New style page breaking"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              0
+            ) ;list
+            (list (pref-experimental-encryption)
+              "Encryption"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              0
+            ) ;list
+            (list (pref-experimental-use-native-menubar)
+              "Use native menubar"
+              '()
+              '()
+              #f
+              'hint
+              (hint-macos-only)
+              'layout
+              'two-col
+              'column
+              0
+              'platform-filter
+              'macos-only
+            ) ;list
+            ;; 右栏（column 1）—— Experimental 程序员 / 搜索 / 打印 等。
+            (list (pref-prog-highlight-brackets)
+              "Program bracket matching"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              1
+            ) ;list
+            (list (pref-prog-automatic-brackets)
+              "Automatic program brackets"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              1
+            ) ;list
+            (list (pref-prog-select-brackets)
+              "Program bracket selections"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              1
+            ) ;list
+            (list (pref-case-insensitive-match)
+              "Case-insensitive search"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              1
+            ) ;list
+            (list (pref-gui-print-dialogue)
+              "Use print dialogue"
+              '()
+              '()
+              #f
+              'hint
+              (hint-qt-only)
+              'layout
+              'two-col
+              'column
+              1
+              'platform-filter
+              'qt-only
+            ) ;list
+            (list (pref-texlive-fonts)
+              "Use fonts in texlive"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              1
+            ) ;list
+            (list (pref-experimental-use-unified-toolbar)
+              "Use unified toolbars"
+              '()
+              '()
+              #f
+              'hint
+              (hint-macos-only)
+              'layout
+              'two-col
+              'column
+              1
+              'platform-filter
+              'macos-only
+            ) ;list
+          ) ;list
+    ;; ghost text 触发开关仅非社区版展示（社区版无 ghost-cloud-predict，本来就不触发）。
+    ;; 不能作为 (list ...) 的条件元素——社区版下求值成 '()，build-tab 逐字段
+    ;; field->descriptor 会对 '() 做 list-ref 越界崩溃。
+    (if (community-stem?)
+      '()
+      (list (list (pref-experimental-ghost-text)
+              "Ghost text"
+              '()
+              '()
+              #f
+              'layout
+              'two-col
+              'column
+              0
+            ) ;list
+      ) ;list
+    ) ;if
+  ) ;append
+) ;define
 
-(tm-widget (other-preferences-widget)
-  (centered
-    (dynamic (misc-preferences-widget))
-    ======
-    (bold (text "Experimental features (to be used with care)"))
-    ======
-    (dynamic (experimental-preferences-widget))))
+;; 字段格式解析 / flag->assoc / 平台过滤 / current-value / resolve-options /
+;; field->descriptor / build-tab 等 QML facade 纯函数族见 preferences-tools.scm。
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Preferences widget
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ---- meta 总入口：组装 tab 树 ----
+;; 返回 list of tab 描述符。每个 tab 为 (key label fields ...)：
+;;   key    —— tab 内部键（"general" / "keyboard" / "mathematics" / "convert" / "other"）
+;;   label  —— 已 translate 的 tab 标题
+;;   fields —— 该 tab 的字段描述符列表（由 preferences-qml-build-tab 返回）
+;; Convert tab 额外携带子 tab（sub-tabs）：sub-tabs 为 list of (sub-key sub-label sub-fields)。
 
-(tm-widget (preferences-widget)
-  (centered
-    (icon-tabs
-      (icon-tab "tm_prefs_general.xpm" (text "General")
-        (centered
-          (dynamic (general-preferences-widget))))
-      (icon-tab "tm_prefs_keyboard.xpm" (text "Keyboard")
-        (centered
-          (dynamic (keyboard-preferences-widget))))
-      ;; TODO: please implement nice icon tabs first before
-      ;; adding new tabs in the preferences widget
-      ;; The tabs currently take too much horizontal space
-      (icon-tab "tm_prefs_math.xpm" (text "Mathematics")
-        (centered
-          (dynamic (math-preferences-widget))))
-      (icon-tab "tm_prefs_convert.xpm" (text "Convert")
-        (dynamic (conversion-preferences-widget)))
-      (icon-tab "tm_prefs_other.xpm" (text "Other")
-        (centered
-          (dynamic (other-preferences-widget)))))))
+(tm-define (preferences-qml-meta)
+  (let ((meta (list (list "general"
+                      (translate "General")
+                      (preferences-qml-build-tab preferences-qml-general-fields)
+                    ) ;list
+                (list "keyboard"
+                  (translate "Keyboard")
+                  (preferences-qml-build-tab preferences-qml-keyboard-fields)
+                ) ;list
+                (list "mathematics"
+                  (translate "Mathematics")
+                  (preferences-qml-build-tab preferences-qml-math-fields)
+                ) ;list
+                (list "convert"
+                  (translate "Convert")
+                  '()
+                  (list-filter (list (list "html"
+                                       (translate "Html")
+                                       (preferences-qml-build-tab preferences-qml-convert-html-fields)
+                                     ) ;list
+                                 (list "latex"
+                                   (translate "LaTeX")
+                                   (preferences-qml-build-tab preferences-qml-convert-latex-fields)
+                                 ) ;list
+                                 (list "bibtex"
+                                   (translate "BibTeX")
+                                   (preferences-qml-build-tab preferences-qml-convert-bibtex-fields)
+                                 ) ;list
+                                 (list "verbatim"
+                                   (translate "Verbatim")
+                                   (preferences-qml-build-tab preferences-qml-convert-verbatim-fields)
+                                 ) ;list
+                                 (if (or (supports-native-pdf?) (supports-ghostscript?))
+                                   (list "pdf"
+                                     (translate "Pdf")
+                                     (preferences-qml-build-tab preferences-qml-convert-pdf-fields)
+                                   ) ;list
+                                   #f
+                                 ) ;if
+                                 (list "image"
+                                   (translate "Image")
+                                   (preferences-qml-build-tab preferences-qml-convert-image-fields)
+                                 ) ;list
+                               ) ;list
+                    identity
+                  ) ;list-filter
+                ) ;list
+                (list "other"
+                  (translate "Other")
+                  (append (preferences-qml-build-tab preferences-qml-other-misc-fields)
+                    (preferences-qml-build-tab preferences-qml-other-experimental-fields)
+                  ) ;append
+                ) ;list
+              ) ;list
+        ) ;meta
+       ) ;
+    (when (not preferences-qml-field-kind-table-initialized?)
+      (set! preferences-qml-field-kind-table
+        (preferences-qml-collect-field-kinds meta)
+      ) ;set!
+      (set! preferences-qml-field-kind-table-initialized? #t)
+    ) ;when
+    meta
+  ) ;let
+) ;tm-define
 
-(tm-define (open-preferences-window)
-  (:interactive #t)
-  (top-window preferences-widget "User preferences"))
+;; ---- submit：应用 diff（先确认再 apply） ----
+;; changed-assoc 为 scheme assoc list：((key . val) ...)，key / val 均为字符串（val 对
+;; toggle 为 "on"/"off"，对 combo 为内部键）。统一为字符串 wire 格式——bridge 把 QML 的
+;; bool toggle 序列化为 "on"/"off" 串后传入。
+;;
+;; 返回 "applied" / "restart" / "later" / "cancel"：
+;;   applied —— 无需重启字段改动，全部直接 apply。
+;;   restart —— 有需重启字段改动，用户确认重启：非重启键实时 apply、重启键 silent 写值
+;;              （实时切 language 等会触发 Qt 输入法重建 SIGSEGV，故重启键一律 silent，
+;;              重启后加载新值）+ 存盘 + restart-TeXmacs。
+;;   later   —— 有需重启字段改动，用户选「稍后」，重启字段走 silent 写值（下次启动生效）。
+;;   cancel  —— 有需重启字段改动，用户选「取消」，什么都不 apply（先确认再 apply，无需回滚）。
 
-(tm-define (open-preferences)
-  (:interactive #t)
-  (if (side-tools?)
-      (tool-select :right 'preferences-tool)
-      (open-preferences-window)))
+(tm-define (preferences-qml-submit changed-assoc)
+  (with changed-keys
+    (map car changed-assoc)
+    (with restart-changed
+      (list-filter changed-keys
+        (lambda (k) (preferences-qml-restart-relevant? k changed-assoc))
+      ) ;list-filter
+      (with non-restart-changed
+        (list-filter changed-keys (lambda (k) (not (member k restart-changed))))
+        (if (null? restart-changed)
+          ;; 无需重启字段改动：全部直接 apply。
+          (begin
+            (for (key changed-keys)
+              (preferences-qml-set-field key (cdr (assoc key changed-assoc)))
+            ) ;for
+            "applied"
+          ) ;begin
+          ;; 有需重启字段改动：「先确认再 apply」——先弹 ConfirmRestart（标题用首个改动重启字段），
+          ;; 再按用户选择分别 apply / silent 写值 / 不 apply。
+          (with title
+            (restart-preference-title (car restart-changed))
+            (with choice
+              (cpp-confirm-restart title (restart-effect-message))
+              (cond ((== choice "restart")
+                     ;; 非重启键实时 apply；重启键走 silent（不实时切）——实时切 language
+                     ;; 等会立即触发 Qt 输入法/菜单重建，在 restart-TeXmacs 真正执行前
+                     ;; SIGSEGV。既然紧接着重启，silent 写值后重启加载新值，效果等价。
+                     (for (key non-restart-changed)
+                       (preferences-qml-set-field key (cdr (assoc key changed-assoc)))
+                     ) ;for
+                     (for (key restart-changed)
+                       (preferences-qml-set-field-silent key (cdr (assoc key changed-assoc)))
+                     ) ;for
+                     (when (not (defined? 'save-all-buffers))
+                       (use-modules (autosave plugin))
+                     ) ;when
+                     (save-all-buffers)
+                     (restart-TeXmacs)
+                     "restart"
+                    ) ;
+                    ((== choice "later")
+                     ;; 非重启字段：普通 setter 实时生效；重启字段：silent 写值（下次启动生效）。
+                     (for (key non-restart-changed)
+                       (preferences-qml-set-field key (cdr (assoc key changed-assoc)))
+                     ) ;for
+                     (for (key restart-changed)
+                       (preferences-qml-set-field-silent key (cdr (assoc key changed-assoc)))
+                     ) ;for
+                     "later"
+                    ) ;
+                    (else
+                      ;; cancel：什么都不 apply。先确认再 apply 的好处——重启字段改动尚未 apply，
+                      ;; 故无需回滚；非重启字段也未 apply（与「先确认再 apply」的语义一致）。
+                      "cancel"
+                    ) ;else
+              ) ;cond
+            ) ;with
+          ) ;with
+        ) ;if
+      ) ;with
+    ) ;with
+  ) ;with
+) ;tm-define
+
+;; ---- set-field：统一 setter，按 key 路由副作用 ----
+;; 普通 key：走 set-pretty-preference（combo）或 set-boolean-preference（toggle）。
+;; 副作用 key：路由到专用 setter——buffer management 联动 tab bar、formula radio 互斥、
+;; latex source-tracking / conservative / transparent 双向写等。
+;; val 统一为字符串（toggle 为 "on"/"off"，combo 为内部键）。
+
+(define (preferences-qml-set-field key val)
+  (let ((kind (preferences-qml-field-kind key)))
+    (cond
+      ;; buffer management：联动 tab bar boolean 偏好 + show-icon-bar 4 副作用。
+      ((== key (pref-general-buffer-management)) (on-buffer-management-changed val))
+      ;; latex 统一展示键：双向写（import + export 各一偏好）。
+      ((== key "latex:source-tracking") (set-latex-source-tracking (== val "on")))
+      ((== key "latex:conservative") (set-latex-conservative (== val "on")))
+      ((== key "latex:transparent-source-tracking")
+       (set-latex-transparent-source-tracking (== val "on"))
+      ) ;
+      ;; 更新通道：选中另一通道即走 updater-switch-channel 的两次确认
+      ;; + download+apply 切换链。用户在确认弹窗点取消时首选项不写，什么都不动；
+      ;; 选回当前通道（val 与现值相同）时 updater-switch-channel 自行 no-op。
+      ((== key (pref-update-channel)) (updater-switch-channel val))
+      ;; HTML formula-export 互斥组：任意一个开则关另外两个。
+      ((member key (preferences-qml-html-formula-export-keys))
+       (preferences-qml-set-html-formula-export key val)
+      ) ;
+      ;; 普通 key：按 kind 分流。combo 走 pretty 偏好；toggle 走 boolean 偏好。
+      ((== kind "combo") (set-pretty-preference key val))
+      ((== val "on") (set-boolean-preference key #t))
+      ((== val "off") (set-boolean-preference key #f))
+      (else (set-pretty-preference key val))
+    ) ;cond
+  ) ;let
+) ;define
+
+;; silent 写值版（later 分支用）：走 set-pretty-preference-silent / silent 写 boolean 偏好，
+;; 当前会话不实时切，下次启动生效。需重启字段才用 silent——非重启字段走普通 set-field。
+
+(define (preferences-qml-set-field-silent key val)
+  (let ((kind (preferences-qml-field-kind key)))
+    (cond ((== key "latex:source-tracking")
+           (set-boolean-preference (pref-latex-import-source-tracking) (== val "on"))
+           (set-boolean-preference (pref-latex-export-source-tracking) (== val "on"))
+           (save-preferences)
+          ) ;
+          ((== key "latex:conservative")
+           (set-boolean-preference (pref-latex-import-conservative) (== val "on"))
+           (set-boolean-preference (pref-latex-export-conservative) (== val "on"))
+           (save-preferences)
+          ) ;
+          ((== key "latex:transparent-source-tracking")
+           (set-boolean-preference (pref-latex-import-transparent-source-tracking)
+             (== val "on")
+           ) ;set-boolean-preference
+           (set-boolean-preference (pref-latex-export-transparent-source-tracking)
+             (== val "on")
+           ) ;set-boolean-preference
+           (save-preferences)
+          ) ;
+          ;; HTML formula-export 互斥组：任意一个开则关另外两个。
+          ((member key (preferences-qml-html-formula-export-keys))
+           (preferences-qml-set-html-formula-export key val)
+           (save-preferences)
+          ) ;
+          ;; buffer management 走 silent：仅写偏好，不做 show-icon-bar 副作用（下次启动自然生效）。
+          ((== key (pref-general-buffer-management))
+           (set-pretty-preference-silent (pref-general-buffer-management) val)
+          ) ;
+          ;; 更新通道走 silent：仅写偏好（当前会话不触发切换链，下次启动生效）。
+          ((== key (pref-update-channel))
+           (set-preference (pref-update-channel) val)
+           (save-preferences)
+          ) ;
+          ;; 普通 key：按 kind 分流。
+          ((== kind "combo") (set-pretty-preference-silent key val))
+          ((== val "on") (set-boolean-preference key #t) (save-preferences))
+          ((== val "off") (set-boolean-preference key #f) (save-preferences))
+          (else (set-pretty-preference-silent key val))
+    ) ;cond
+  ) ;let
+) ;define
+
+;; ---- action 按钮：combo 旁的行内按钮（如 Auto backup 打开备份目录） ----
+;; action 函数由插件注入（(autosave plugin) 模块），先 use-modules 兜底加载、再调
+;; 字面函数名。label 取值（preferences-qml-action-button-label）见 preferences-tools.scm；
+;; bridge callAction(name) 透传到本模块的 preferences-qml-call-action 执行。
+
+(tm-define (preferences-qml-call-action name)
+  (cond ((== name "open-auto-backup-location")
+         (when (not (defined? 'open-auto-backup-location))
+           (use-modules (autosave plugin))
+         ) ;when
+         (when (defined? 'open-auto-backup-location)
+           (open-auto-backup-location)
+         ) ;when
+        ) ;
+  ) ;cond
+) ;tm-define

@@ -16,11 +16,12 @@
     (utils library cursor)
     (utils edit variants)
     (utils misc tooltip)
-    (bibtex bib-complete)
+    (latex bibtex-bib-complete)
     (source macro-search)
-    (telemetry telemetry-track)
   ) ;:use
 ) ;texmacs-module
+
+(import (liii http))
 
 (tm-define (generic-context? t) #t)
 ;; overridden in, e.g., graphics mode
@@ -109,16 +110,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define algo-macro-tags
-  '(algo-if algo-else-if
-     algo-else
-     algo-while
-     algo-for
-     algo-for-all
-     algo-for-each
-     algo-repeat
-     algo-loop
-     algo-procedure
-     algo-function
+  '(algo-if algo-else-if algo-else algo-while algo-for algo-for-all
+     algo-for-each algo-repeat algo-loop algo-procedure algo-function
      algo-if-else-if)
 ) ;define
 
@@ -574,7 +567,7 @@
 ) ;tm-define
 
 (tm-define (kbd-remove t forwards?)
-  (:require (at-image-start?))
+  (:require (if forwards? (just-before-image?) (just-after-image?)))
   (let ((image (any-image-context?)))
     (tree-cut image)
   ) ;let
@@ -593,19 +586,10 @@
 ;; 辅助函数：定义 enumerate-tag-list
 
 (define (enumerate-tag-list)
-  '(enumerate enumerate-numeric
-     enumerate-numeric-bracket
-     enumerate-roman
-     enumerate-roman-bracket
-     enumerate-roman-paren
-     enumerate-Roman
-     enumerate-alpha
-     enumerate-alpha-bracket
-     enumerate-alpha-full-paren
-     enumerate-Alpha
-     enumerate-circle
-     enumerate-hanzi
-     enumerate-numeric-paren)
+  '(enumerate enumerate-numeric enumerate-numeric-bracket enumerate-roman
+     enumerate-roman-bracket enumerate-roman-paren enumerate-Roman
+     enumerate-alpha enumerate-alpha-bracket enumerate-alpha-full-paren
+     enumerate-Alpha enumerate-circle enumerate-hanzi enumerate-numeric-paren)
 ) ;define
 
 ;; 辅助函数：定义 itemize-tag-list
@@ -617,11 +601,8 @@
 ;; 辅助函数：定义 description-tag-list
 
 (define (description-tag-list)
-  '(description description-compact
-     description-aligned
-     description-dash
-     description-long
-     description-paragraphs)
+  '(description description-compact description-aligned description-dash
+     description-long description-paragraphs)
 ) ;define
 
 ;; 辅助函数：检查是否在有序列表环境中
@@ -1215,7 +1196,7 @@
 (tm-define (kbd-cut) (clipboard-cut "primary"))
 (tm-define (kbd-paste)
   (clipboard-paste "primary")
-  (when (chat-input-buffer? (current-buffer-url))
+  (when (and (defined? 'chat-input-buffer?) (chat-input-buffer? (current-buffer-url)))
     (qt-chat-notify-input-height)
   ) ;when
   (when (defined? 'tutorial-notify-action)
@@ -1230,14 +1211,29 @@
 ;;
 ;; 语法
 ;; ----
-;; (ocr-paste)
-(tm-define (ocr-paste)
+;; (ocr-paste source-format)
+
+(define (clipboard-tree-image? data)
+  (or (tree-is? data 'image)
+    (and (tree? data) (tree-compound? data) (tree-is? (tree-ref data 0) 'image))
+    (and (tree-is? data 'with) (tree-is? (tree-ref data 2) 'image))
+  ) ;or
+) ;define
+
+;; 0-arg wrapper: keep backward compatibility with callers that call (ocr-paste)
+(tm-define (ocr-paste) (ocr-paste "image"))
+
+(tm-define (ocr-paste source-format)
   (when (not (defined? 'ocr-to-latex-by-cursor))
-    (use-modules (liii ocr))
+    (use-modules (ocr liii-ocr))
   ) ;when
   (with data
-    (parse-texmacs-snippet (tree->string (tree-ref (clipboard-get "primary") 1)))
-    (when (tree-is? (tree-ref data 0) 'image)
+    (if (string=? source-format "texmacs-snippet")
+      (tree-ref (clipboard-get "primary") 0)
+      ;; 剪贴板树为 (clipboard <label> <snippet-string>)，内容在 child 1
+      (parse-texmacs-snippet (tree->string (tree-ref (clipboard-get "primary") 1)))
+    ) ;if
+    (when (clipboard-tree-image? data)
       (ocr-to-latex-by-cursor data)
     ) ;when
   ) ;with
@@ -1251,12 +1247,13 @@
 ;; (image-and-ocr-paste)
 (tm-define (image-and-ocr-paste)
   (with data
+    ;; 外部剪贴板树为 (extern <snippet-string>)，内容在 child 1
     (parse-texmacs-snippet (tree->string (tree-ref (clipboard-get "primary") 1)))
     (when (tree-is? (tree-ref data 0) 'image)
       (kbd-paste)
       (kbd-return)
       (when (not (defined? 'ocr-to-latex-by-cursor))
-        (use-modules (liii ocr))
+        (use-modules (ocr liii-ocr))
       ) ;when
       (ocr-to-latex-by-cursor data)
     ) ;when
@@ -1264,11 +1261,35 @@
 ) ;tm-define
 
 (tm-define (paste-as-html)
-  (clipboard-paste-import "html" "primary")
+  (with source-format
+    (qt-clipboard-format)
+    (if (string=? source-format "html")
+      (let* ((fm (format-determine (qt-clipboard-text) "verbatim")))
+        (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
+              ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
+              ((string=? fm "verbatim") (kbd-paste))
+              ((string=? fm "markdown") (paste-as-markdown))
+        ) ;cond
+      ) ;let*
+      (clipboard-paste-import "html" "primary")
+    ) ;if
+  ) ;with
 ) ;tm-define
 
 (tm-define (paste-as-markdown)
-  (clipboard-paste-import "markdown" "primary")
+  (if (community-stem?)
+    (begin
+      (clipboard-paste-import "verbatim" "primary")
+      (kbd-return)
+      (let* ((latex-code (string-load (unix->url "$TEXMACS_PATH/plugins/ocr/data/md.tex")))
+             (parsed-latex (parse-latex latex-code))
+             (texmacs-latex (latex->texmacs parsed-latex))
+            ) ;
+        (insert texmacs-latex)
+      ) ;let*
+    ) ;begin
+    (clipboard-paste-import "markdown" "primary")
+  ) ;if
 ) ;tm-define
 
 ;; paste-as-texmacs
@@ -1279,17 +1300,13 @@
 
 (tm-define (paste-as-texmacs)
   (when (not (defined? 'ocr-to-latex-by-cursor))
-    (use-modules (liii ocr))
+    (use-modules (ocr liii-ocr))
   ) ;when
   (with img-tree
-    (tree-ref (clipboard-get "primary") 1)
+    (tree-ref (clipboard-get "primary") 0)
     (cond ((tree-is? img-tree 'image) (ocr-to-latex-by-cursor img-tree))
-          ((and (tree-is? img-tree 'with) (not (null? (tree-ref img-tree 2))))
-           (let* ((sub-img-tree (tree-ref img-tree 2)))
-             (when (tree-is? sub-img-tree 'image)
-               (ocr-to-latex-by-cursor img-tree)
-             ) ;when
-           ) ;let*
+          ((and (tree-is? img-tree 'with) (tree-is? (tree-ref img-tree 2) 'image))
+           (ocr-to-latex-by-cursor img-tree)
           ) ;
     ) ;cond
   ) ;with
@@ -1301,62 +1318,19 @@
 ;; 语法
 ;; (smart-format-paste)
 
-(define (smart-paste-markdown-text? text)
-  (and (string? text)
-    (let* ((s (string-trim-spaces text)))
-      (and (not (string-null? s))
-        (or (string-starts? s "# ")
-          (string-starts? s "## ")
-          (string-starts? s "### ")
-          (string-starts? s "```")
-          (string-starts? s "> ")
-          (string-contains? text "\n# ")
-          (string-contains? text "\n## ")
-          (string-contains? text "\n```")
-          (string-contains? text "\n- ")
-          (string-contains? text "\n* ")
-          (string-contains? text "\n1. ")
-          (string-contains? text "**")
-          (string-contains? text "](")
-          (string-contains? text "\n|")
-        ) ;or
-      ) ;and
-    ) ;let*
-  ) ;and
-) ;define
-
-(tm-define (smart-paste-detect-text-format text)
-  (if (not (string? text))
-    "verbatim"
-    (let ((fm (format-determine text "verbatim")))
-      (cond ((string=? fm "html") "html")
-            ((smart-paste-markdown-text? text) "markdown")
-            ((string=? fm "latex") "latex")
-            (else "verbatim")
-      ) ;cond
-    ) ;let
-  ) ;if
-) ;tm-define
-
-(define (smart-paste-apply-format fm)
-  (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
-        ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
-        ((string=? fm "markdown") (paste-as-markdown))
-        ((string=? fm "internal") (paste-as-texmacs))
-        ((string=? fm "image") (ocr-paste))
-        (else (kbd-paste-verbatim))
-  ) ;cond
-) ;define
-
 (tm-define (smart-format-paste)
   (with source-format
     (qt-clipboard-format)
-    (cond ((string-starts? source-format "image") (ocr-paste))
-          ((string=? source-format "texmacs-snippet") (paste-as-texmacs))
-          ((string=? source-format "html") (clipboard-paste-import "html" "primary"))
-          ((string=? source-format "verbatim")
-           (smart-paste-apply-format (smart-paste-detect-text-format (qt-clipboard-text)))
+    (cond ((or (string=? source-format "verbatim") (string=? source-format "html"))
+           (let* ((fm (format-determine (qt-clipboard-text) "verbatim")))
+             (cond ((string=? fm "html") (clipboard-paste-import "html" "primary"))
+                   ((string=? fm "latex") (clipboard-paste-import "latex" "primary"))
+                   ((string=? fm "verbatim") (kbd-paste))
+                   ((string=? fm "markdown") (paste-as-markdown))
+             ) ;cond
+           ) ;let*
           ) ;
+          ((string=? source-format "texmacs-snippet") (paste-as-texmacs))
           (else (kbd-paste-verbatim))
     ) ;cond
   ) ;with
@@ -1378,28 +1352,136 @@
 ;;
 ;; TODO: 在文本模式中，可以自动识别剪贴板中的内容，并魔法粘贴。比如，内容格式经过识别，发现是LaTeX格式，
 ;; 那么应该粘贴为LaTeX格式
-(tm-define (kbd-magic-paste)
-  (if (string-starts? (qt-clipboard-format) "image")
-    (begin
-      (ocr-paste)
-      (track-event "OCR_RECOGNIZE" '(("mode" . "paste")))
-    ) ;begin
-    (with mode
-      (get-env "mode")
-      (cond ((== mode "prog")
-             (clipboard-paste-import "code" "primary")
-             (track-event "MAGIC_PASTE" '(("mode" . "prog")))
-            ) ;
-            ((== mode "math")
-             (clipboard-paste-import "latex" "primary")
-             (track-event "MAGIC_PASTE" '(("mode" . "math")))
-            ) ;
-            (else (smart-format-paste) (track-event "MAGIC_PASTE" '(("mode"
-                                                                     . "text"))))
+(tm-define (check-magic-paste)
+  (when (not (defined? 'account-load-token))
+    (use-modules (account liii))
+  ) ;when
+  (let* ((token (account-load-token))
+         (base-url (current-stem-site))
+         (check-url (string-append base-url "/api/v1/oauth2/magicPaste/check"))
+         (headers (stem-preview-request-headers check-url
+                    (list (cons "Authorization" (string-append "Bearer " token))
+                      (cons "Content-Type" "application/json")
+                    ) ;list
+                  ) ;stem-preview-request-headers
+         ) ;headers
+        ) ;
+    (if (string=? token "")
+      "not-logged-in"
+      (catch #t
+        (lambda ()
+          (let* ((r (http-post check-url '() "{}" headers)) (status (r 'status-code)))
+            (cond ((= status 200) "allowed")
+                  ((= status 401) "not-logged-in")
+                  ((= status 403) "limit-exceeded")
+                  (else "allowed")
+            ) ;cond
+          ) ;let*
+        ) ;lambda
+        (lambda (key . args) "allowed")
+      ) ;catch
+    ) ;if
+  ) ;let*
+) ;tm-define
+
+(tm-widget (magic-paste-login-widget cmd)
+  (padded (text "Please log in to use Magic Paste")
+    ======
+    (centered (explicit-buttons ("Login" (cmd "ok"))))
+  ) ;padded
+) ;tm-widget
+
+(tm-widget (magic-paste-upgrade-widget cmd)
+  (padded (text "Daily Magic Paste limit reached. Upgrade for unlimited access.")
+    ======
+    (centered (explicit-buttons ("Upgrade" (cmd "ok"))))
+  ) ;padded
+) ;tm-widget
+
+(define (show-magic-paste-login-dialog)
+  (dialogue-window magic-paste-login-widget
+    (lambda (answ) (when (== answ "ok") (login)))
+    "Magic Paste"
+  ) ;dialogue-window
+) ;define
+
+(define (show-magic-paste-upgrade-dialog)
+  (dialogue-window magic-paste-upgrade-widget
+    (lambda (answ) (when (== answ "ok") (open-pricing-url)))
+    "Magic Paste"
+  ) ;dialogue-window
+) ;define
+
+(tm-define (with-magic-paste-check cont)
+  (if (community-stem?)
+    (cont)
+    (let ((result (check-magic-paste)))
+      (cond ((== result "allowed") (cont))
+            ((== result "not-logged-in") (show-magic-paste-login-dialog))
+            ((== result "limit-exceeded") (show-magic-paste-upgrade-dialog))
       ) ;cond
-    ) ;with
+    ) ;let
   ) ;if
-  (when (chat-input-buffer? (current-buffer-url))
+) ;tm-define
+
+(tm-define (kbd-magic-paste)
+  (let ((source-format (qt-clipboard-format)))
+    (cond ((string-starts? source-format "image")
+           (ocr-paste "image")
+           (when (defined? 'track-event)
+             (track-event "OCR_RECOGNIZE" '(("mode" . "paste")))
+           ) ;when
+          ) ;
+          ((string=? source-format "texmacs-snippet")
+           (with data
+             (tree-ref (clipboard-get "primary") 0)
+             (if (clipboard-tree-image? data)
+               (begin
+                 (ocr-paste "texmacs-snippet")
+                 (when (defined? 'track-event)
+                   (track-event "OCR_RECOGNIZE" '(("mode" . "paste")))
+                 ) ;when
+               ) ;begin
+               (begin
+                 (kbd-paste)
+                 (when (defined? 'track-event)
+                   (track-event "MAGIC_PASTE" '(("mode" . "internal")))
+                 ) ;when
+               ) ;begin
+             ) ;if
+           ) ;with
+          ) ;
+          (else (with-magic-paste-check (lambda ()
+                                          (with mode
+                                            (get-env "mode")
+                                            (cond ((== mode "prog")
+                                                   (clipboard-paste-import "code" "primary")
+                                                   (when (defined? 'track-event)
+                                                     (track-event "MAGIC_PASTE" '(("mode"
+                                                                                   . "prog")))
+                                                   ) ;when
+                                                  ) ;
+                                                  ((== mode "math")
+                                                   (clipboard-paste-import "latex" "primary")
+                                                   (when (defined? 'track-event)
+                                                     (track-event "MAGIC_PASTE" '(("mode"
+                                                                                   . "math")))
+                                                   ) ;when
+                                                  ) ;
+                                                  (else (smart-format-paste)
+                                                    (when (defined? 'track-event)
+                                                      (track-event "MAGIC_PASTE" '(("mode"
+                                                                                    . "text")))
+                                                    ) ;when
+                                                  ) ;else
+                                            ) ;cond
+                                          ) ;with
+                                        ) ;lambda
+                ) ;with-magic-paste-check
+          ) ;else
+    ) ;cond
+  ) ;let
+  (when (and (defined? 'chat-input-buffer?) (chat-input-buffer? (current-buffer-url)))
     (qt-chat-notify-input-height)
   ) ;when
   (when (defined? 'tutorial-notify-action)
@@ -1411,15 +1493,21 @@
   (tree-innermost (lambda (t) (tree-is? t 'image)) #t)
 ) ;tm-define
 
-(tm-define (at-image-start?)
-  (with image
-    (any-image-context?)
-    (and image
-      (let* ((p (cursor-path)) (ip (tree->path image)))
-        (or (== p ip) (and (== (cDr p) ip) (<= (cAr p) 1)))
-      ) ;let*
-    ) ;and
-  ) ;with
+;; 判断光标是否紧贴在 image 节点之后
+;; 光标在 image 这种原子节点上只有两个停留位：offset 0（图片前）与 offset 1（图片后）
+;; 故用 cDr==ip 且 cAr>=1 判定“图片后”，退格时据此整体删图，避免误删图片前的换行
+(tm-define (just-after-image?)
+  (let* ((p (cursor-path)) (img (any-image-context?)))
+    (and img (== (cDr p) (tree->path img)) (>= (cAr p) 1))
+  ) ;let*
+) ;tm-define
+
+;; 判断光标是否紧贴在 image 节点之前（offset 0）
+;; Delete 键向右删，仅在光标位于图片前时才整体删图
+(tm-define (just-before-image?)
+  (let* ((p (cursor-path)) (img (any-image-context?)))
+    (and img (== (cDr p) (tree->path img)) (== (cAr p) 0))
+  ) ;let*
 ) ;tm-define
 
 (tm-define (notify-activated t) (noop))
@@ -1561,12 +1649,7 @@
 ) ;tm-define
 
 (tm-define (focus-has-preferences? t)
-  (:require (tree-in? t '(reference pageref
-                           eqref
-                           smart-ref
-                           hlink
-                           locus
-                           ornament))
+  (:require (tree-in? t '(reference pageref eqref smart-ref hlink locus ornament))
   ) ;:require
   #t
 ) ;tm-define
@@ -2136,16 +2219,9 @@
 
 (tm-define (standard-parameters l)
   (:require (== l "ornament"))
-  (list "ornament-shape"
-    "ornament-title-style"
-    "ornament-border"
-    "ornament-corner"
-    "ornament-hpadding"
-    "ornament-vpadding"
-    "ornament-color"
-    "ornament-extra-color"
-    "ornament-sunny-color"
-    "ornament-shadow-color"
+  (list "ornament-shape" "ornament-title-style" "ornament-border"
+    "ornament-corner" "ornament-hpadding" "ornament-vpadding" "ornament-color"
+    "ornament-extra-color" "ornament-sunny-color" "ornament-shadow-color"
   ) ;list
 ) ;tm-define
 
@@ -2179,13 +2255,8 @@
 
 (tm-define (parameter-choice-list l)
   (:require (== l "ornament-title-style"))
-  (list "classic"
-    "top left"
-    "top center"
-    "top right"
-    "bottom left"
-    "bottom center"
-    "bottom right"
+  (list "classic" "top left" "top center" "top right" "bottom left"
+    "bottom center" "bottom right"
   ) ;list
 ) ;tm-define
 
@@ -2267,6 +2338,8 @@
          (tuple "cartesian" (point "0" "0") "1")
          (graphics))
       (insert-go-to `(draw-over ,"" ,g ,"2cm") '(1 2 1))
+      ;; 默认缩放 200%
+      (graphics-zoom 2.0)
     ) ;with
   ) ;if
 ) ;tm-define
@@ -2297,11 +2370,8 @@
          (is-ref? (cut tree-in? <> '(note-ref note-ref*)))
          (is-text? (cut tree-in?
                      <>
-                     '(note-inline note-inline*
-                        note-wide
-                        note-wide*
-                        note-footnote
-                        note-footnote*)
+                     '(note-inline note-inline* note-wide note-wide*
+                        note-footnote note-footnote*)
                    ) ;cut
          ) ;is-text?
          (ref-l (tree-search buf is-ref?))
@@ -2335,13 +2405,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (thumbnail-suffixes)
-  (list->url (map url-wildcard '("*.gif"
-                                 "*.jpg"
-                                 "*.jpeg"
-                                 "*.JPG"
-                                 "*.JPEG"
-                                 "*.png"
-                                 "*.PNG"))
+  (list->url (map url-wildcard '("*.gif" "*.jpg" "*.jpeg" "*.JPG" "*.JPEG"
+                                 "*.png" "*.PNG"))
   ) ;list->url
 ) ;define
 
@@ -2507,9 +2572,7 @@
 
 (tm-define (make-balloon)
   (:synopsis "Insert a balloon")
-  (wrap-selection-small (insert-go-to '(inactive (hover-balloon ""
-                                                   ""
-                                                   "left"
+  (wrap-selection-small (insert-go-to '(inactive (hover-balloon "" "" "left"
                                                    "Bottom")) '(0 0 0))
   ) ;wrap-selection-small
 ) ;tm-define
@@ -2654,6 +2717,13 @@
       ) ;cond
     ) ;with
   ) ;with-innermost
+) ;tm-define
+
+(tm-define (kbd-dunhao-tab)
+  ;; 「、 Tab」：组合命中时 try_shortcut 的 mark_cancel 已回滚最近一次按键
+  ;; 插入的顿号（、、Tab 只吞离 Tab 最近的那个），这里只需进 hybrid
+  ;; 命令模式（对齐 \ 键的 make-hybrid）
+  (if (or (inside? 'hybrid) (in-prog?)) (noop) (make-hybrid))
 ) ;tm-define
 
 (tm-define (hybrid-kbd-sub) (activate-hybrid #f) (make-script #f #t))

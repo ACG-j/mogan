@@ -11,33 +11,44 @@
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(use-modules (dynamic session-edit))
+(use-modules (julia julia-binary))
+
+(lazy-format (julia julia-format) julia)
 
 (define (julia-serialize lan t)
-  (let* ((u (pre-serialize lan t))
-         (s (texmacs->code (stree->tree u) "SourceCode")))
-    (string-append s "\n<EOF>\n")))
+  (with u
+    (pre-serialize lan t)
+    (with s (texmacs->utf8raw (stree->tree u)) (string-append s "\n<EOF>\n"))
+  ) ;with
+) ;define
 
 (define (julia-entry)
-  (url->system (string->url
-    (if (url-exists? "$TEXMACS_HOME_PATH/plugins/julia/julia/MoganJulia.jl")
-        "$TEXMACS_HOME_PATH/plugins/julia/julia/MoganJulia.jl"
-        "$TEXMACS_PATH/plugins/julia/julia/MoganJulia.jl"))))
+  (url->system (string->url (if (url-exists? "$TEXMACS_HOME_PATH/plugins/julia/bin/julia.jl")
+                              "$TEXMACS_HOME_PATH/plugins/julia/bin/julia.jl"
+                              "$TEXMACS_PATH/plugins/julia/bin/julia.jl"
+                            ) ;if
+               ) ;string->url
+  ) ;url->system
+) ;define
 
 (define (julia-launcher)
-  (let* ((boot (string-quote (julia-entry))))
-    (string-append "julia " boot)))
+  (let* ((boot (string-quote (julia-entry))) (cmd (url->system (find-binary-julia))))
+    (if (os-windows?)
+      (string-append cmd " " boot)
+      (string-append "env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH " cmd " " boot)
+    ) ;if
+  ) ;let*
+) ;define
 
 (plugin-configure julia
-  (:winpath "Julia*" "bin")
-  (:macpath "Julia*" "Contents/Resources/julia/bin")
-  (:require (url-exists-in-path? "julia"))
+  (:require (has-binary-julia?))
   (:serializer ,julia-serialize)
   (:launch ,(julia-launcher))
   (:tab-completion #t)
-  (:session "Julia"))
-
-(lazy-format (data julia) julia)
+  (:session "Julia")
+) ;plugin-configure
 
 (when (supports-julia?)
-  (plugin-input-converters julia))
+  (use-modules (utils plugins plugin-convert))
+  (plugin-input-converters julia)
+) ;when

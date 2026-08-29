@@ -2,10 +2,6 @@
   (import (liii base)
     (liii list)
     (rename (guenchi json)
-      (json-ref g:json-ref)
-      (json-ref* g:json-ref*)
-      (json-set g:json-set)
-      (json-set* g:json-set*)
       (json-push g:json-push)
       (json-push* g:json-push*)
       (json-drop g:json-drop)
@@ -50,91 +46,40 @@
     ;; ; 0. 统一接口
     ;; ; ---------------------------------------------------------
 
+    ;; json->string 由 C++ 实现（src/liii_json.cpp 中的 g_json->string）
+    (define json->string g_json->string)
+
+    ;; string->json 由 C++ 实现（src/liii_json.cpp 中的 g_string->json）
+    (define string->json g_string->json)
+
+    ;; json-ref 由 C++ 实现（src/liii_json.cpp 中的 g_json_ref）
+    (define json-ref g_json_ref)
+
+    ;; json-set 由 C++ 实现（src/liii_json.cpp 中的 g_json_set）
+    (define json-set g_json_set)
+
     (define (ensure-json-structure x)
       (unless (or (json-object? x) (json-array? x))
-        (type-error "Value is not a JSON object or array"
-          x
-        ) ;type-error
+        (type-error "Value is not a JSON object or array" x)
       ) ;unless
-    ) ;define
-
-    (define (json-ref json key . args)
-      (if (null? json)
-        '()
-        (begin
-          (ensure-json-structure json)
-          (let ((val (if (and (json-object? json)
-                           (equal? json '(()))
-                         ) ;and
-                       '()
-                       (g:json-ref json key)
-                     ) ;if
-                ) ;val
-               ) ;
-            (if (null? args)
-              val
-              (apply json-ref (cons val args))
-            ) ;if
-          ) ;let
-        ) ;begin
-      ) ;if
-    ) ;define
-
-    (define (json-set json key val . args)
-      (ensure-json-structure json)
-      (if (null? args)
-        (if (and (json-object? json)
-              (equal? json '(()))
-            ) ;and
-          json
-          (g:json-set json key val)
-        ) ;if
-        (json-set json
-          key
-          (lambda (x)
-            (apply json-set
-              (cons x (cons val args))
-            ) ;apply
-          ) ;lambda
-        ) ;json-set
-      ) ;if
     ) ;define
 
     (define (json-push json key val . args)
       (ensure-json-structure json)
       (if (null? args)
-        (if (and (json-object? json)
-              (equal? json '(()))
-            ) ;and
+        (if (and (json-object? json) (equal? json '(())))
           (g:json-push '() key val)
           (g:json-push json key val)
         ) ;if
-        (json-set json
-          key
-          (lambda (x)
-            (apply json-push
-              (cons x (cons val args))
-            ) ;apply
-          ) ;lambda
-        ) ;json-set
+        (json-set json key (lambda (x) (apply json-push (cons x (cons val args)))))
       ) ;if
     ) ;define
 
     (define (json-drop json key . args)
       (ensure-json-structure json)
       (if (null? args)
-        (if (and (json-object? json)
-              (equal? json '(()))
-            ) ;and
-          json
-          (g:json-drop json key)
-        ) ;if
-        (json-set json
-          key
-          (lambda (x)
-            (apply json-drop (cons x args))
-          ) ;lambda
-        ) ;json-set
+        (if (and (json-object? json) (equal? json '(()))) json (g:json-drop json key))
+        (json-set json key (lambda (x) (apply json-drop (cons x args))))
       ) ;if
     ) ;define
 
@@ -144,14 +89,11 @@
         (begin
           (ensure-json-structure json)
           (if (null? args)
-            (value-error "json-reduce: missing arguments"
-            ) ;value-error
+            (value-error "json-reduce: missing arguments")
             (if (null? (cdr args))
               ;; Single level: (json-reduce json key proc)
               (let ((proc (car args)))
-                (if (and (json-object? json)
-                      (equal? json '(()))
-                    ) ;and
+                (if (and (json-object? json) (equal? json '(())))
                   json
                   (g:json-reduce json key proc)
                 ) ;if
@@ -164,11 +106,7 @@
                     ) ;
                 (json-reduce json
                   top-key
-                  (lambda (k v)
-                    (apply json-reduce
-                      (append (list v) rest-keys (list proc))
-                    ) ;apply
-                  ) ;lambda
+                  (lambda (k v) (apply json-reduce (append (list v) rest-keys (list proc))))
                 ) ;json-reduce
               ) ;let*
             ) ;if
@@ -186,10 +124,7 @@
     ) ;define
 
     (define (json-object? x)
-      (and (list? x)
-        (not (null? x))
-        (or (equal? x '(())) (every pair? x))
-      ) ;and
+      (and (list? x) (not (null? x)) (or (equal? x '(())) (every pair? x)))
     ) ;define
 
     (define (json-array? x)
@@ -223,10 +158,7 @@
     (define (json-contains-key? json key)
       (if (not (json-object? json))
         #f
-        (if (equal? json '(()))
-          #f
-          (if (assoc key json) #t #f)
-        ) ;if
+        (if (equal? json '(())) #f (if (assoc key json) #t #f))
       ) ;if
     ) ;define
 
@@ -267,13 +199,7 @@
     ;; ; ---------------------------------------------------------
 
     (define (json-keys json)
-      (if (json-object? json)
-        (if (equal? json '(()))
-          '()
-          (map car json)
-        ) ;if
-        '()
-      ) ;if
+      (if (json-object? json) (if (equal? json '(())) '() (map car json)) '())
     ) ;define
 
   ) ;begin

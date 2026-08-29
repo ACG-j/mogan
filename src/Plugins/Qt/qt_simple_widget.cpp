@@ -22,11 +22,13 @@
 #include "QTMMenuHelper.hpp"
 #include "QTMStyle.hpp"
 #include "QTMTextPopup.hpp"
+#include "QTMUserPromptPopup.hpp"
 #include "QTMWidget.hpp"
 #ifdef Q_OS_LINUX
 #include <QGuiApplication>
 #include <QInputMethod>
 #endif
+#include <QDateTime>
 #include <QLayout>
 #include <QPixmap>
 #if QT_VERSION >= 0x060000
@@ -56,6 +58,12 @@ qt_simple_widget_rep::~qt_simple_widget_rep () {
   if (textPopup != nullptr) delete textPopup;
 }
 
+// 上一个编辑器稳定后的 extents 尺寸。新建编辑器的 extents 要等排版后才
+// 下发，若初始直接用全窗口提示尺寸，首帧 surface 会撑满整窗，把页面白底
+// 铺到灰边位置（新建/打开文档闪白）；沿用上个编辑器的稳定尺寸可让首帧
+// 直接以页宽居中显示。
+static QSize last_editor_extents;
+
 QWidget*
 qt_simple_widget_rep::as_qwidget () {
   if (qwid) return qwid;
@@ -66,8 +74,18 @@ qt_simple_widget_rep::as_qwidget () {
   handle_get_size_hint (width, height);
   QSize sz                  = to_qsize (width, height);
   scrollarea ()->editor_flag= is_editor_widget ();
-  scrollarea ()->setExtents (QRect (QPoint (0, 0), sz));
+  // 编辑器画布从创建起就是 Fixed 尺寸策略：页宽小于窗口时 surface 居中、
+  // 两侧由 viewport 透出灰边。若等 sync_startup_tab_mode 再设置，首帧
+  // surface 会撑满整窗，把页面白底铺到灰边位置（新建/打开文档闪白）
+  if (is_editor_widget ())
+    scrollarea ()->surface ()->setSizePolicy (QSizePolicy::Fixed,
+                                              QSizePolicy::Fixed);
+  QSize esz= sz;
+  if (is_editor_widget () && last_editor_extents.isValid ())
+    esz= last_editor_extents;
+  scrollarea ()->setExtents (QRect (QPoint (0, 0), esz));
   canvas ()->resize (sz);
+  if (is_editor_widget ()) awaiting_first_show= true;
 
   all_widgets->insert ((pointer) this);
   backing_pos= canvas ()->origin ();
@@ -228,7 +246,12 @@ qt_simple_widget_rep::send (slot s, blackbox val) {
   case SLOT_EXTENTS: {
     check_type<coord4> (val, s);
     coord4 p= open_box<coord4> (val);
-    scrollarea ()->setExtents (to_qrect (p));
+    QRect  r= to_qrect (p);
+    if (is_editor_widget () && r.isValid () && !r.isEmpty ()) {
+      last_editor_extents= r.size ();
+      last_extents_ms    = QDateTime::currentMSecsSinceEpoch ();
+    }
+    scrollarea ()->setExtents (r);
   } break;
 
   case SLOT_SIZE: {
@@ -245,6 +268,11 @@ qt_simple_widget_rep::send (slot s, blackbox val) {
     qp-= QPoint (sz.width () / 2, sz.height () / 2);
     // NOTE: adjust because child is centered
     scrollarea ()->setOrigin (qp);
+    // origin 变化会改变 popup 全局坐标映射，及时刷新 popup
+    if (ghostTextPopup && ghostTextPopup->isVisible ())
+      ghostTextPopup->updatePosition ();
+    if (diffTextPopup && diffTextPopup->isVisible ())
+      diffTextPopup->updatePosition ();
   } break;
 
   case SLOT_ZOOM_FACTOR: {
@@ -277,10 +305,19 @@ qt_simple_widget_rep::send (slot s, blackbox val) {
     check_type<coord2> (val, s);
     coord2 p= open_box<coord2> (val);
     canvas ()->setCursorPos (to_qpoint (p));
-#ifdef Q_OS_LINUX
+    // 光标坐标在此刷新，及时刷新 popup
+    if (ghostTextPopup && ghostTextPopup->isVisible ())
+      ghostTextPopup->updatePosition ();
+    if (diffTextPopup && diffTextPopup->isVisible ())
+      diffTextPopup->updatePosition ();
     QInputMethod* im= QGuiApplication::inputMethod ();
-    if (im) im->update (Qt::ImCursorRectangle);
+    if (im) {
+      // 光标进出数学模式时通知平台重查 ImEnabled，切换输入法启用状态
+      im->update (Qt::ImEnabled);
+#ifdef Q_OS_LINUX
+      im->update (Qt::ImCursorRectangle);
 #endif
+    }
   } break;
 
   default:
@@ -620,8 +657,11 @@ qt_simple_widget_rep::repaint_all () {
   iterator<pointer> i= iterate (qt_simple_widget_rep::all_widgets);
   while (i->busy ()) {
     qt_simple_widget_rep* w= static_cast<qt_simple_widget_rep*> (i->next ());
-    if (w->canvas () && w->canvas ()->isVisible ())
+    if (w->canvas () && w->canvas ()->isVisible ()) {
+      bench_start ("repaint_invalid_regions");
       w->repaint_invalid_regions ();
+      bench_end ("repaint_invalid_regions", 10);
+    }
   }
 }
 
@@ -870,4 +910,78 @@ qt_simple_widget_rep::is_point_in_text_popup (SI x, SI y) {
 
   // 检查点是否在工具栏内
   return toolbarRect.contains (px, py);
+}
+
+void
+qt_simple_widget_rep::ensure_ghost_popup () {
+  if (ghostTextPopup) {
+    if (ghostTextPopup->parent () != canvas ()) {
+      ghostTextPopup->setParent (canvas ());
+    }
+    return;
+  }
+  ghostTextPopup= new QTMGhostTextPopup (canvas (), this);
+  if (is_empty (tm_style_sheet)) {
+    ghostTextPopup->setStyle (qtmstyle ());
+  }
+}
+
+void
+qt_simple_widget_rep::show_ghost_popup () {
+  ensure_ghost_popup ();
+  ghostTextPopup->showPopup ();
+}
+
+void
+qt_simple_widget_rep::hide_ghost_popup () {
+  if (ghostTextPopup) {
+    ghostTextPopup->hide ();
+  }
+}
+
+void
+qt_simple_widget_rep::scroll_ghost_popup_by (SI x, SI y) {
+  if (ghostTextPopup) {
+    QPoint qp (x, y);
+    coord2 p= from_qpoint (qp);
+    ghostTextPopup->scrollBy (p.x1, p.x2);
+    ghostTextPopup->updatePosition ();
+  }
+}
+
+void
+qt_simple_widget_rep::ensure_diff_popup () {
+  if (diffTextPopup) {
+    if (diffTextPopup->parent () != canvas ()) {
+      diffTextPopup->setParent (canvas ());
+    }
+    return;
+  }
+  diffTextPopup= new QTMDiffTextPopup (canvas (), this);
+  if (is_empty (tm_style_sheet)) {
+    diffTextPopup->setStyle (qtmstyle ());
+  }
+}
+
+void
+qt_simple_widget_rep::show_diff_popup () {
+  ensure_diff_popup ();
+  diffTextPopup->showPopup ();
+}
+
+void
+qt_simple_widget_rep::hide_diff_popup () {
+  if (diffTextPopup) {
+    diffTextPopup->hide ();
+  }
+}
+
+void
+qt_simple_widget_rep::scroll_diff_popup_by (SI x, SI y) {
+  if (diffTextPopup) {
+    QPoint qp (x, y);
+    coord2 p= from_qpoint (qp);
+    diffTextPopup->scrollBy (p.x1, p.x2);
+    diffTextPopup->updatePosition ();
+  }
 }

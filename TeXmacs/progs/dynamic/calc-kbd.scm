@@ -11,27 +11,27 @@
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(texmacs-module (dynamic calc-kbd)
-  (:use (math math-kbd)    
-        (dynamic calc-table)))
+(texmacs-module (dynamic calc-kbd) (:use (math math-kbd) (dynamic calc-table)))
+(debug-message "keyboard" "(dynamic calc-kbd): registering kbd-map ...\n")
 
-(kbd-map
-  (:require (inside? 'calc-table))
-  (", ," (make 'cell-commas))
-  ("+ +" (make 'cell-plusses)))
+(kbd-map (:require (inside? 'calc-table))
+ (", ," (make 'cell-commas))
+ ("+ +" (make 'cell-plusses))
+) ;kbd-map
 
-(kbd-map
-  (:require (calc-ready?))
-  ("\\ \\" (make-calc-inert))
-  ("\\ !" (make-calc-input))
-  ("\\ ?" (make 'calc-ref)))
+(kbd-map (:require (calc-ready?))
+ ("\\ \\" (make-calc-inert))
+ ("\\ !" (make-calc-input))
+ ("\\ ?" (make 'calc-ref))
+) ;kbd-map
 
-(kbd-map
-  (:require (and (calc-ready?) (style-has? "icourse-dtd")))
-  ("\\ <" (make-calc-generate))
-  ("\\ >" (make-calc-answer))
-  ("\\ ]" (make-calc-check))
-  ("C-return" (calc-regenerate))
-  ("C-*" (calc-regenerate))
-  ("C-!" (calc-solutions #f))
-  ("C-?" (calc-solutions #t)))
+(kbd-map (:require (and (calc-ready?) (style-has? "icourse-dtd")))
+ ("\\ <" (make-calc-generate))
+ ("\\ >" (make-calc-answer))
+ ("\\ ]" (make-calc-check))
+ ("C-return" (calc-regenerate))
+ ("C-*" (calc-regenerate))
+ ("C-!" (calc-solutions #f))
+ ("C-?" (calc-solutions #t))
+) ;kbd-map
+(debug-message "keyboard" "(dynamic calc-kbd): kbd-map registered\n")

@@ -12,6 +12,27 @@ function main()
     return {
         binding_object = "",
         initializer_name = "initialize_glue_lolly",
+        standalone = true,
+        includes = {
+            "object_l1.hpp",
+            "object_l2.hpp",
+            "s7_tm.hpp",
+            "analyze.hpp",
+            "file.hpp",
+            "locale.hpp",
+            "sys_utils.hpp",
+            "tm_file.hpp",
+            "tree.hpp",
+            "url.hpp",
+            "scheme.hpp",
+            "glue_l2_extra.hpp",
+            "<lolly/data/base64.hpp>",
+            "<lolly/data/herk.hpp>",
+            "<lolly/data/numeral.hpp>",
+            "<lolly/data/unicode.hpp>",
+            "<lolly/io/http.hpp>",
+            "<lolly/system/subprocess.hpp>",
+        },
         glues = {
             {
                 scm_name = "lolly-version",
@@ -63,15 +84,6 @@ function main()
                 scm_name = "string-occurs?",
                 cpp_name = "occurs",
                 ret_type = "bool",
-                arg_list = {
-                    "string",
-                    "string"
-                }
-            },
-            {
-                scm_name = "string-count-occurrences",
-                cpp_name = "count_occurrences",
-                ret_type = "int",
                 arg_list = {
                     "string",
                     "string"
@@ -218,15 +230,6 @@ function main()
                 }
             },
             {
-                scm_name = "cpp-string-recompose",
-                cpp_name = "recompose",
-                ret_type = "string",
-                arg_list = {
-                    "array_string",
-                    "string"
-                }
-            },
-            {
                 scm_name = "string-trim-spaces-left",
                 cpp_name = "trim_spaces_left",
                 ret_type = "string",
@@ -298,18 +301,8 @@ function main()
                 ret_type = "string"
             },
             {
-                scm_name = "os-win32?",
-                cpp_name = "os_win",
-                ret_type = "bool"
-            },
-            {
-                scm_name = "os-mingw?",
-                cpp_name = "os_mingw",
-                ret_type = "bool"
-            },
-            {
-                scm_name = "os-macos?",
-                cpp_name = "os_macos",
+                scm_name = "os-wasm?",
+                cpp_name = "os_wasm",
                 ret_type = "bool"
             },
             {
@@ -817,6 +810,22 @@ function main()
                 ret_type = "string",
                 arg_list = {
                     "int"
+                }
+            },
+            {
+                scm_name = "utf8->herk",
+                cpp_name = "lolly::data::utf8_to_herk",
+                ret_type = "string",
+                arg_list = {
+                    "string"
+                }
+            },
+            {
+                scm_name = "herk->utf8",
+                cpp_name = "lolly::data::herk_to_utf8",
+                ret_type = "string",
+                arg_list = {
+                    "string"
                 }
             },
             -- lolly/system

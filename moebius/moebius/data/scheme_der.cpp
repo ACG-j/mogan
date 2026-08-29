@@ -40,8 +40,9 @@ scm_unquote (string s) {
  ******************************************************************************/
 void
 unslash (string& s, int i, int end_index, string& r, int& r_index) {
-  char ch= s[i];
+  // 循环顶先判界再读字符:原实现末尾的 ch= s[i] 会越界读一字节
   while (i < end_index) {
+    char ch= s[i];
     if ((ch == '\\') && ((i + 1) < end_index)) {
       i++;
       ch= s[i];
@@ -68,19 +69,48 @@ unslash (string& s, int i, int end_index, string& r, int& r_index) {
       r_index++;
     }
     i++;
-    ch= s[i];
   }
 }
 
-static bool
-is_spc (char c) {
-  return (c == ' ') || (c == '\t') || (c == '\n');
+// Character type flags for fast classification via lookup table
+enum {
+  CT_SPC  = 1 << 0, // whitespace: ' ', '\t', '\n'
+  CT_PAREN= 1 << 1, // parenthesis: '(', ')'
+  CT_ESC  = 1 << 2, // backslash: '\\'
+  CT_QUOTE= 1 << 3, // double quote: '\"'
+  CT_SEMI = 1 << 4  // semicolon: ';'
+};
+
+static unsigned char char_type[256];
+static bool          char_type_init= false;
+
+static void
+init_char_type () {
+  char_type[(unsigned char) ' ']|= CT_SPC | CT_PAREN;
+  char_type[(unsigned char) '\t']|= CT_SPC | CT_PAREN;
+  char_type[(unsigned char) '\n']|= CT_SPC | CT_PAREN;
+  char_type[(unsigned char) '(']|= CT_PAREN;
+  char_type[(unsigned char) ')']|= CT_PAREN;
+  char_type[(unsigned char) '\\']|= CT_ESC;
+  char_type[(unsigned char) '\"']|= CT_QUOTE;
+  char_type[(unsigned char) ';']|= CT_SEMI;
+  char_type_init= true;
 }
 
-static bool
-is_paren_or_spc (char c) {
-  return (c == ' ') || (c == '\t') || (c == '\n') || (c == '(') || (c == ')');
-};
+static void
+skip_scheme_blanks (string& s, int& i, const int length) {
+  unsigned char* types= char_type;
+  while (i < length) {
+    unsigned char t= types[(unsigned char) s[i]];
+    if (!(t & (CT_SPC | CT_SEMI))) break;
+    if (t & CT_SEMI) {
+      i++;
+      while (i < length && s[i] != '\n')
+        i++;
+    }
+    else i++;
+  }
+}
 
 static scheme_tree
 string_to_scheme_tree (string& s, int& i, const int length) {
@@ -95,8 +125,7 @@ string_to_scheme_tree (string& s, int& i, const int length) {
       scheme_tree p (TUPLE);
       i++;
       while (true) {
-        while (is_spc (s[i]) && (i < length))
-          i++;
+        skip_scheme_blanks (s, i, length);
         if ((i == length) || (s[i] == ')')) break;
         p << string_to_scheme_tree (s, i, length);
       }
@@ -111,25 +140,26 @@ string_to_scheme_tree (string& s, int& i, const int length) {
 
     case '\"': { // "
       i++;
-      int       end_index  = i;
-      const int start_index= i;
-      char      ch         = s[end_index];
-      while (!(ch == '\"') && end_index < length) {
-        if ((ch == '\\') && (end_index < length - 1)) end_index++;
-        end_index++;
+      int            end_index  = i;
+      const int      start_index= i;
+      char           ch;
+      unsigned char* types= char_type;
+      // 先判界再读字符:原实现的 ch= s[end_index] 会越界读末尾一字节
+      while (end_index < length) {
         ch= s[end_index];
+        if (ch == '\"') break;
+        if (types[(unsigned char) ch] & CT_ESC) {
+          if (end_index < length - 1) end_index++;
+        }
+        end_index++;
       }
       const int r_size      = 1; // N ("\"");
       int       quoted_index= r_size;
       string    quoted (r_size + end_index - i);
       quoted[0]= '"';
       unslash (s, start_index, end_index, quoted, quoted_index);
-      if (i < length) {
-        i= end_index + 1;
-      }
-      else {
-        i= end_index;
-      };
+      if (i < length) i= end_index + 1;
+      else i= end_index;
       quoted->resize (quoted_index + 1);
       quoted[quoted_index]= '"';
       return scheme_tree (quoted);
@@ -141,13 +171,18 @@ string_to_scheme_tree (string& s, int& i, const int length) {
       break;
 
     default: {
-      int       end_index  = i;
-      const int start_index= i;
-      char      ch         = s[end_index];
-      while (!(is_paren_or_spc (ch)) && end_index < length) {
-        if ((ch == '\\') && (end_index < length - 1)) end_index++;
-        end_index++;
+      int            end_index  = i;
+      const int      start_index= i;
+      char           ch;
+      unsigned char* types= char_type;
+      // 先判界再读字符,避免词元结尾在缓冲区末尾时越界读
+      while (end_index < length) {
         ch= s[end_index];
+        if (types[(unsigned char) ch] & (CT_SPC | CT_PAREN)) break;
+        if (types[(unsigned char) ch] & CT_ESC) {
+          if (end_index < length - 1) end_index++;
+        }
+        end_index++;
       }
       const int r_size     = 0; // empty string
       int       token_index= r_size;
@@ -164,7 +199,15 @@ string_to_scheme_tree (string& s, int& i, const int length) {
 
 scheme_tree
 string_to_scheme_tree (string s) {
-  s               = replace (s, "\015", "");
+  if (!char_type_init) init_char_type ();
+  // 含 CR 时才做整串替换拷贝
+  bool has_cr= false;
+  for (int k= 0; k < N (s); k++)
+    if (s[k] == '\015') {
+      has_cr= true;
+      break;
+    }
+  if (has_cr) s= replace (s, "\015", "");
   int       i     = 0;
   const int length= N (s);
   return string_to_scheme_tree (s, i, length);
@@ -172,14 +215,26 @@ string_to_scheme_tree (string s) {
 
 scheme_tree
 block_to_scheme_tree (string s) {
+  if (!char_type_init) init_char_type ();
+  // 同 string_to_scheme_tree: 先剥离 CR,否则 CRLF 文件中元组内的换行
+  // 会被当作普通 token,导致跨行条目(如翻译字典)解析失败
+  bool has_cr= false;
+  for (int k= 0; k < N (s); k++)
+    if (s[k] == '\015') {
+      has_cr= true;
+      break;
+    }
+  if (has_cr) s= replace (s, "\015", "");
   scheme_tree p (TUPLE);
   int         i     = 0;
   const int   length= N (s);
-  while ((i < length) && (is_spc (s[i]) || s[i] == ')'))
+  skip_scheme_blanks (s, i, length);
+  while (i < length && s[i] == ')')
     i++;
   while (i < length) {
     p << string_to_scheme_tree (s, i, length);
-    while ((i < length) && (is_spc (s[i]) || s[i] == ')'))
+    skip_scheme_blanks (s, i, length);
+    while (i < length && s[i] == ')')
       i++;
   }
   return p;
@@ -246,6 +301,18 @@ scheme_to_tree (string s) {
 tree
 scheme_document_to_tree (string s) {
   tree error (moebius::ERROR, "bad format or data");
+  // 允许文件以 ; 行注释（如版权头）开头，先跳过再找 document 前缀
+  int       start= 0;
+  const int s_N  = N (s);
+  while (start < s_N) {
+    if (s[start] == ';') {
+      while (start < s_N && s[start] != '\n')
+        start++;
+    }
+    else if (is_space (s[start])) start++;
+    else break;
+  }
+  if (start > 0) s= s (start, s_N);
   if (starts (s, "(document (apply \"TeXmacs\" ") ||
       starts (s, "(document (expand \"TeXmacs\" ") ||
       starts (s, "(document (TeXmacs ")) {

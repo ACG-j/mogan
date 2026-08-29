@@ -19,7 +19,6 @@
 class object;
 
 /*** Miscellaneous ***/
-bool is_snippet (tree doc);
 void set_file_focus (url u);
 url  get_file_focus ();
 
@@ -54,14 +53,16 @@ tree                 eqnumber_to_nonumber (tree t);
 string               search_metadata (tree doc, string kind);
 
 /*** TMU ***/
-tree   tmu_to_tree (string s);
-tree   tmu_document_to_tree (string s);
-string tree_to_tmu (tree t);
+#include "tmu.hpp"
 
 /*** Verbatim ***/
 string tree_to_verbatim (tree t, bool wrap= false, string enc= "default");
 tree   verbatim_to_tree (string s, bool wrap= false, string enc= "default");
 tree   verbatim_document_to_tree (string s, bool w= false, string e= "default");
 bool   is_verbatim (tree t);
+
+/*** UTF-8 raw (plugin I/O) ***/
+string tree_to_utf8raw (tree t);
+tree   utf8raw_to_tree (string s);
 
 #endif // defined CONVERT_H

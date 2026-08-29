@@ -380,7 +380,7 @@
 ) ;tm-define
 
 (menu-bind document-short-chinese-font-menu
-  (cond ((os-win32?)
+  (cond ((os-windows?)
          (if (font-exists-in-tt? "simhei") ("SimHei" (init-font "simhei")))
          (if (font-exists-in-tt? "simfang") ("SimFang" (init-font "simfang")))
          (if (font-exists-in-tt? "simkai") ("SimKai" (init-font "simkai")))
@@ -771,17 +771,9 @@
   ) ;->
   (-> "Margins"
    ("Default"
-     (init-default "page-width-margin"
-       "page-height-margin"
-       "page-odd"
-       "page-even"
-       "page-right"
-       "par-width"
-       "page-odd-shift"
-       "page-even-shift"
-       "page-top"
-       "page-bot"
-       "page-height-margin"
+     (init-default "page-width-margin" "page-height-margin" "page-odd"
+       "page-even" "page-right" "par-width" "page-odd-shift" "page-even-shift"
+       "page-top" "page-bot" "page-height-margin"
      ) ;init-default
    ) ;
    ---
@@ -809,11 +801,8 @@
   ) ;->
   (-> "Screen margins"
    ("Default"
-     (init-default "page-screen-margin"
-       "page-screen-left"
-       "page-screen-right"
-       "page-screen-top"
-       "page-screen-bot"
+     (init-default "page-screen-margin" "page-screen-left" "page-screen-right"
+       "page-screen-top" "page-screen-bot"
      ) ;init-default
    ) ;
    ("Margins as on paper" (toggle-page-screen-margin))
@@ -936,7 +925,6 @@
  ("Palette" (interactive-background set-background '()))
  ("Pattern" (open-pattern-selector set-background "1cm"))
  ("Gradient" (open-gradient-selector set-background))
- ("Picture" (open-background-picture-selector set-background))
  ("Other" (init-interactive-env "bg-color"))
 ) ;menu-bind
 
@@ -1194,8 +1182,11 @@
   ---
   (dynamic (focus-document-menu t))
   (dynamic (focus-document-extra-menu t))
-  ---
-  ("Help" (focus-help))
+  (if (qt-gui?)
+    ;; ImGui 前端精简：移除 Focus 菜单末尾的 Help
+    ---
+    ("Help" (focus-help))
+  ) ;if
 ) ;tm-menu
 
 (tm-menu (focus-document-extra-icons t))

@@ -33,6 +33,8 @@ private slots:
     QTChatTabWidget::setGlobalSidebarCollapsed (false);
   }
 
+  void cleanup () { cleanup_qt_top_level_widgets (); }
+
   void test_count_input_lines_empty_document () {
     tree empty_doc= tree (DOCUMENT, "");
     QCOMPARE (ChatConversationPanel::count_input_lines (empty_doc), 1);
@@ -94,6 +96,18 @@ private slots:
   void test_is_empty_document_body_multiple_paragraphs () {
     tree doc= tree (DOCUMENT, "para1", "para2");
     QVERIFY (!ChatConversationPanel::is_empty_document_body (doc));
+  }
+
+  void test_is_empty_document_body_missing_buffer () {
+    // get_buffer_body 对不存在的 buffer 返回原子空串，必须视为空文档，
+    // 否则复用空白会话会被误判有消息而进入对话模式（消息区误显示）
+    tree missing= tree ("");
+    QVERIFY (ChatConversationPanel::is_empty_document_body (missing));
+  }
+
+  void test_is_empty_document_body_atomic_non_empty () {
+    tree atom= tree ("hello");
+    QVERIFY (!ChatConversationPanel::is_empty_document_body (atom));
   }
 
   // === setSidebarCollapsed / isSidebarCollapsed ===
@@ -676,7 +690,12 @@ private slots:
 
   void test_not_send_on_plain_enter_with_completion_popup () {
     QVERIFY (!ChatConversationPanel::should_send_on_keypress (
-        Qt::Key_Return, Qt::NoModifier, true));
+        Qt::Key_Return, Qt::NoModifier, true, false));
+  }
+
+  void test_not_send_on_plain_enter_when_in_hybrid () {
+    QVERIFY (!ChatConversationPanel::should_send_on_keypress (
+        Qt::Key_Return, Qt::NoModifier, false, true));
   }
 
   void test_not_send_on_non_enter_key () {

@@ -192,7 +192,8 @@ tm_failure (const char* msg) {
   cerr << "TeXmacs] Dumping report below\n\n" << report << "\n";
 #else
   url dir ("$TEXMACS_HOME_PATH/system/crash");
-  url err= url_numbered (dir, "crash_report_", "");
+  // time_t 在 macOS 上是 long,int64_t 是 long long,不显式转换会重载二义
+  url err= dir * ("crash_report_" * as_string ((int64_t) texmacs_time ()));
   if (!save_string (err, report))
     cerr << "TeXmacs] Crash report saved in " << err << "\n";
   else
@@ -421,6 +422,7 @@ debug_set (string s, bool on) {
   else if (s == "convert") debug_set (DEBUG_FLAG_CONVERT, on);
   else if (s == "remote") debug_set (DEBUG_FLAG_REMOTE, on);
   else if (s == "live") debug_set (DEBUG_FLAG_LIVE, on);
+  else if (s == "loro") debug_set (DEBUG_FLAG_LORO, on);
 }
 
 static bool
@@ -446,6 +448,7 @@ debug_get (string s) {
   else if (s == "convert") return debug_get (DEBUG_FLAG_CONVERT);
   else if (s == "remote") return debug_get (DEBUG_FLAG_REMOTE);
   else if (s == "live") return debug_get (DEBUG_FLAG_LIVE);
+  else if (s == "loro") return debug_get (DEBUG_FLAG_LORO);
   else return false;
 }
 
@@ -485,5 +488,6 @@ tm_ostream debug_shell    = debug_ostream ("debug-shell");
 tm_ostream debug_io       = debug_ostream ("debug-io");
 tm_ostream debug_spell    = debug_ostream ("debug-spell");
 tm_ostream debug_updater  = debug_ostream ("debug-updater");
+tm_ostream debug_loro     = debug_ostream ("debug-loro");
 
 tm_ostream std_bench= debug_ostream ("std-bench");

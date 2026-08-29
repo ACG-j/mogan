@@ -30,7 +30,7 @@
 ) ;define
 
 (define (convert-format-string-to-symbol name)
-  (cond ((== name "Markdown") "markdown")
+  (cond ((== name "Markdown") "md")
         ((== name "HTML") "html")
         ((== name "LaTeX") "latex")
         ((== name (translate "Plain text")) "verbatim")
@@ -45,7 +45,7 @@
 ) ;define
 
 (define (convert-symbol-to-format-string symbol)
-  (cond ((or (== symbol "md") (== symbol "markdown")) "Markdown")
+  (cond ((== symbol "md") "Markdown")
         ((== symbol "html") "HTML")
         ((== symbol "latex") "LaTeX")
         ((== symbol "mathml") "MathML")
@@ -61,7 +61,7 @@
 ) ;define
 
 (define (get-tips fm)
-  (cond ((or (== fm "md") (== fm "markdown")) "Insert clipboard content as 'Markdown'")
+  (cond ((== fm "md") "Insert clipboard content as 'Markdown'")
         ((== fm "html") "Insert clipboard content as 'HTML'")
         ((== fm "latex") "Insert clipboard content as 'LaTeX'")
         ((== fm "verbatim") "Insert clipboard content as 'plain text'")
@@ -80,7 +80,9 @@
 (define (get-clipboard-format)
   (let* ((fm1 (qt-clipboard-format)))
     (cond ((== fm1 "verbatim")
-           (smart-paste-detect-text-format (qt-clipboard-text))
+           (let* ((raw-text (qt-clipboard-text)) (fm2 (format-determine raw-text "verbatim")))
+             fm2
+           ) ;let*
           ) ;
           ((== fm1 "texmacs-snippet") "internal")
           ((string-starts? fm1 "image") "image")
@@ -110,6 +112,7 @@
 
 (tm-define (is-clipboard-image?)
   (with data
+    ;; 外部剪贴板树为 (extern <snippet-string>)，内容在 child 1
     (parse-texmacs-snippet (tree->string (tree-ref (clipboard-get "primary") 1)))
     (if (tree-is? (tree-ref data 0) 'image) #t #f)
   ) ;with
@@ -197,22 +200,33 @@
 (tm-define (open-clipboard-paste-from-widget)
   (:interactive #t)
 
+  (define (magic-paste-excluded? fm)
+    (or (== fm "image") (== fm "verbatim") (== fm "internal"))
+  ) ;define
+
+  (define (do-paste fm)
+    (cond ((== fm "md") (paste-as-markdown))
+          ((== fm "ocr") (ocr-paste "image"))
+          ((== fm "image_and_ocr") (image-and-ocr-paste))
+          ((== fm "image") (kbd-paste))
+          ((== fm "mathml") (clipboard-paste-import "html" "primary"))
+          ((== fm "html") (paste-as-html))
+          ((and (string=? fm "latex") (string=? (get-clipboard-format) "image"))
+           (ocr-paste "image")
+          ) ;
+          ((== fm "internal") (paste-as-texmacs))
+          (else (clipboard-paste-import fm "primary"))
+    ) ;cond
+  ) ;define
+
   (define callback
     (lambda (fm)
       (when fm
-        (cond ((or (== fm "md") (== fm "markdown")) (paste-as-markdown))
-              ((== fm "ocr") (ocr-paste))
-              ((== fm "image_and_ocr") (image-and-ocr-paste))
-              ((== fm "image") (kbd-paste))
-              ((== fm "mathml") (clipboard-paste-import "html" "primary"))
-              ((== fm "html") (paste-as-html))
-              ((and (string=? fm "latex") (string=? (get-clipboard-format) "image"))
-               (ocr-paste)
-              ) ;
-              ((== fm "internal") (paste-as-texmacs))
-              (else (clipboard-paste-import fm "primary"))
-        ) ;cond
-        (when (chat-input-buffer? (current-buffer-url))
+        (if (magic-paste-excluded? fm)
+          (do-paste fm)
+          (with-magic-paste-check (lambda () (do-paste fm)))
+        ) ;if
+        (when (and (defined? 'chat-input-buffer?) (chat-input-buffer? (current-buffer-url)))
           (qt-chat-notify-input-height)
         ) ;when
       ) ;when

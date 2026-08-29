@@ -11,12 +11,30 @@
 
 function main()
     return {
+        group_name = "glue_basic",
         binding_object = "",
         initializer_name = "initialize_glue_basic",
+        standalone = true,
+        includes = {
+            "object_l1.hpp",
+            "object_l2.hpp",
+            "object_l3.hpp",
+            "object_l5.hpp",
+            "scheme.hpp",
+            "glue_l5_extra.hpp",
+        },
         glues = {
             {
                 scm_name = "texmacs-version-release",
                 cpp_name = "texmacs_version",
+                ret_type = "string",
+                arg_list = {
+                    "string"
+                }
+            },
+            {
+                scm_name = "md5-binary",
+                cpp_name = "md5_binary",
                 ret_type = "string",
                 arg_list = {
                     "string"
@@ -133,11 +151,6 @@ function main()
                 ret_type = "string"
             },
             {
-                scm_name = "plugin-list",
-                cpp_name = "plugin_list",
-                ret_type = "scheme_tree"
-            },
-            {
                 scm_name = "set-fast-environments",
                 cpp_name = "set_fast_environments",
                 ret_type = "void",
@@ -149,14 +162,6 @@ function main()
                 scm_name = "texmacs-time",
                 cpp_name = "texmacs_time",
                 ret_type = "int"
-            },
-            {
-                scm_name = "pretty-time",
-                cpp_name = "pretty_time",
-                ret_type = "string",
-                arg_list = {
-                    "int"
-                }
             },
             {
                 scm_name = "texmacs-memory",
@@ -258,6 +263,15 @@ function main()
             {
                 scm_name = "cpp-set-preference",
                 cpp_name = "set_user_preference",
+                ret_type = "void",
+                arg_list = {
+                    "string",
+                    "string"
+                }
+            },
+            {
+                scm_name = "cpp-set-preference-silent",
+                cpp_name = "set_user_preference_silent",
                 ret_type = "void",
                 arg_list = {
                     "string",
@@ -473,23 +487,6 @@ function main()
                 scm_name = "mark-new",
                 cpp_name = "new_marker",
                 ret_type = "double"
-            },
-            {
-                scm_name = "glyph-register",
-                cpp_name = "register_glyph",
-                ret_type = "void",
-                arg_list = {
-                    "string",
-                    "array_array_array_double"
-                }
-            },
-            {
-                scm_name = "glyph-recognize",
-                cpp_name = "recognize_glyph",
-                ret_type = "string",
-                arg_list = {
-                    "array_array_array_double"
-                }
             },
             {
                 scm_name = "tmtm-eqnumber->nonumber",
@@ -1066,39 +1063,6 @@ function main()
                 cpp_name = "server_started",
                 ret_type = "bool"
             },
-            {
-                scm_name = "client-start",
-                cpp_name = "client_start",
-                ret_type = "int",
-                arg_list = {
-                    "string"
-                }
-            },
-            {
-                scm_name = "client-stop",
-                cpp_name = "client_stop",
-                ret_type = "void",
-                arg_list = {
-                    "int"
-                }
-            },
-            {
-                scm_name = "client-read",
-                cpp_name = "client_read",
-                ret_type = "string",
-                arg_list = {
-                    "int"
-                }
-            },
-            {
-                scm_name = "client-write",
-                cpp_name = "client_write",
-                ret_type = "void",
-                arg_list = {
-                    "int",
-                    "string"
-                }
-            },
               -- connections to extern systems
             {
                 scm_name = "connection-start",
@@ -1447,6 +1411,25 @@ function main()
                 }
             },
             {
+                scm_name = "render-doc-to-png",
+                cpp_name = "buffer_render_to_images",
+                ret_type = "bool",
+                arg_list = {
+                    "url",   -- buffer url
+                    "url",   -- destination png (multi-page: out-1.png, out-2.png, ...)
+                    "double" -- zoom factor
+                }
+            },
+            {
+                scm_name = "render-doc-to-pdf",
+                cpp_name = "buffer_render_to_pdf",
+                ret_type = "bool",
+                arg_list = {
+                    "url",   -- buffer url
+                    "url"    -- destination pdf
+                }
+            },
+            {
                 scm_name = "buffer-save",
                 cpp_name = "buffer_save",
                 ret_type = "bool",
@@ -1719,6 +1702,11 @@ function main()
             {
                 scm_name = "current-window",
                 cpp_name = "get_current_window",
+                ret_type = "url"
+            },
+            {
+                scm_name = "current-window-url",
+                cpp_name = "get_current_window_safe",
                 ret_type = "url"
             },
             {

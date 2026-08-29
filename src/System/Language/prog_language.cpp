@@ -34,7 +34,7 @@ prog_language_rep::prog_language_rep (string name)
   string_start_disallow_after_chars     = array<char> ();
   string_skip_escaped                   = false;
 
-  string use_modules= "(use-modules (code " * name * "-lang))";
+  string use_modules= "(use-modules (" * name * " " * name * "-lang))";
   eval (use_modules);
 
   tree keyword_config= get_parser_config (name, "keyword");
@@ -141,7 +141,7 @@ prog_language_rep::customize_operator (tree config) {
     string group         = get_label (group_of_opers);
     for (int j= 0; j < N (group_of_opers); j++) {
       string word= get_label (group_of_opers[j]);
-      operator_parser.put (tm_encode (word), group);
+      operator_parser.put (utf8_to_cork (word), group);
     }
   }
 }
@@ -459,7 +459,7 @@ prog_language_rep::get_color (tree t, int start, int end) {
       if (!inline_comment_requires_space || (pos == 0 || is_space (s[pos - 1])))
         return decode_color (lan_name, encode_color ("comment"));
     }
-    pos++;
+    tm_char_forwards (s, pos);
   }
 
   if (current_parser == "string_parser") {
@@ -493,14 +493,10 @@ prog_language_rep::get_color (tree t, int start, int end) {
 bool
 prog_lang_exists (string s) {
   return exists (url_system ("$TEXMACS_PATH/progs/prog/" * s * "-lang.scm")) ||
-         exists (url_system ("$TEXMACS_PATH/plugins/" * s * "/progs/code/" * s *
-                             "-lang.scm")) ||
-         exists (url_system ("$TEXMACS_PATH/plugins/code/progs/code/" * s *
-                             "-lang.scm")) ||
-         exists (url_system ("$TEXMACS_HOME_PATH/plugins/" * s *
-                             "/progs/code/" * s * "-lang.scm")) ||
-         exists (url_system ("$TEXMACS_HOME_PATH/plugins/code/progs/code/" * s *
-                             "-lang.scm"));
+         exists (url_system ("$TEXMACS_PATH/plugins/" * s * "/progs/" * s *
+                             "/" * s * "-lang.scm")) ||
+         exists (url_system ("$TEXMACS_HOME_PATH/plugins/" * s * "/progs/" * s *
+                             "/" * s * "-lang.scm"));
 }
 
 /******************************************************************************

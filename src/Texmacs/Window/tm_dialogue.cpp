@@ -15,6 +15,7 @@
 #include "file.hpp"
 #include "message.hpp"
 #include "preferences.hpp"
+#include "sys_utils.hpp"
 #include "tm_file.hpp"
 #include "tm_frame.hpp"
 #include "tm_window.hpp"
@@ -133,6 +134,15 @@ gcd (int i, int j) {
 void
 tm_frame_rep::choose_file (object fun, string title, string type, string prompt,
                            url name) {
+  // 测试钩子：MOGAN_TEST_CHOOSE_FILE 非空时直接回调该路径。
+  string preset= get_env ("MOGAN_TEST_CHOOSE_FILE");
+  if (!is_empty (preset)) {
+    array<object> args;
+    args << object (url_system (preset));
+    call (fun, args);
+    return;
+  }
+
   command cb = dialogue_command (get_server (), fun, 1);
   widget  wid= file_chooser_widget (cb, type, prompt);
   if (!is_scratch (name)) {
@@ -150,9 +160,18 @@ tm_frame_rep::choose_file (object fun, string title, string type, string prompt,
     }
   }
   else {
-    // The env HOME is set for Windows in research.cpp
-    set_directory (wid, as_system_string (url_system ("$HOME")));
+    // scratch buffer 无真实路径，默认打开其宿主目录 Documents/LiiiSTEM
+    // （scheme scratch-buffer-name 创建 scratch 文件时已确保该目录存在）
+    set_directory (wid, as_system_string (get_documents_path () * "LiiiSTEM"));
   }
+#ifdef __EMSCRIPTEN__
+  // WASM: 自身处理保存（同步保存+下载）/打开（JS 文件选择器），不需要
+  // dialogue 窗口。但仍需设置 dialogue_wid，供 dialogue_command::apply 经
+  // dialogue_inquire 读取选择结果。直接触发 perform_dialog，跳过窗口创建。
+  dialogue_wid= wid;
+  send_keyboard_focus (wid);
+  return;
+#endif
   dialogue_start (title, wid);
   if (type == "directory") send_keyboard_focus (get_directory (dialogue_wid));
   else send_keyboard_focus (get_file (dialogue_wid));

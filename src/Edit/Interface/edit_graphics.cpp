@@ -17,6 +17,7 @@
 #include "scheme.hpp"
 #include "server.hpp"
 #include "tree_observer.hpp"
+#include <cmath>
 #include <moebius/drd/drd_std.hpp>
 
 using namespace moebius;
@@ -88,6 +89,17 @@ can_snap (gr_selection sel) {
   if (type == "grid-curve-point&text-border")
     return check_snap_mode ("text border") &&
            check_snap_mode ("curve-curve intersection");
+  if (type == "ghost-curve-point") return check_snap_mode ("ghost line");
+  if (type == "ghost-curve-point&ghost-curve-point")
+    return check_snap_mode ("ghost line");
+  if (type == "ghost-curve-point&grid-curve-point" ||
+      type == "grid-curve-point&ghost-curve-point")
+    return check_snap_mode ("ghost line") &&
+           check_snap_mode ("grid curve point");
+  if (type == "ghost-curve-point&curve-point" ||
+      type == "curve-point&ghost-curve-point")
+    return check_snap_mode ("ghost line") && check_snap_mode ("curve point");
+  if (type == "curve-mid-point") return check_snap_mode ("curve point");
   cout << "Uncaptured snap type " << type << "\n";
   return true;
 }
@@ -129,6 +141,18 @@ snap_to_guide (point p, gr_selections sels, double eps) {
           (!ends (sels[i]->type, "-border") ||
            !ends (sels[j]->type, "-point")) &&
           !ends (sels[i]->type, "handle") && !ends (sels[j]->type, "handle")) {
+        // 过滤共线或平行的直线，防止由于重合导致 Newton
+        // 求解器产生跟随鼠标的“伪零距离交点”；仅对直线对生效，
+        // 圆在 t=0.5 处的切向只是单点方向，按同一方向绘制的两个圆
+        // 在此处切向必然平行，会被误过滤
+        if (is_straight_line (sels[i]->c) && is_straight_line (sels[j]->c)) {
+          bool   err;
+          point  v1 = sels[i]->c->grad (0.5, err);
+          point  v2 = sels[j]->c->grad (0.5, err);
+          double det= v1[0] * v2[1] - v1[1] * v2[0];
+          if (fabs (det) < 1e-4 * norm (v1) * norm (v2)) continue;
+        }
+
         array<point> ins= intersection (sels[i]->c, sels[j]->c, p, eps);
         for (int k= 0; k < N (ins); k++)
           if (best->type == "none" || norm (ins[k] - p) < best->dist) {
@@ -191,7 +215,7 @@ edit_graphics_rep::over_graphics (SI x, SI y) {
   if (!is_nil (f)) {
     point lim1, lim2;
     find_limits (lim1, lim2);
-    point p= adjust (f[point (x, y)]);
+    point p= f[point (x, y)];
     // cout << type << " at " << p << " [" << lim1 << ", " << lim2 << "]\n";
     if (N (lim1) == 2)
       if ((p[0] < lim1[0]) || (p[0] > lim2[0]) || (p[1] < lim1[1]) ||
@@ -279,6 +303,202 @@ edit_graphics_rep::find_graphical_region (SI& x1, SI& y1, SI& x2, SI& y2) {
   return true;
 }
 
+static string ghost_last_set= "\1"; // 上次序列化的标尺集合，用于变更检测
+
+static void
+snap_ghost_line (edit_graphics_rep* eg, point fp, double snap_distance,
+                 gr_selections& sels, frame f2) {
+  if (!check_snap_mode ("ghost line")) {
+    // PERF: 仅在注册过标尺时才需要清除
+    if (N (ghost_last_set) != 0) {
+      call ("graphics-clear-ghost-lines");
+      ghost_last_set= "";
+    }
+    return;
+  }
+  tree   lines (TUPLE);
+  string ghost_cur_set; // 当前序列化的标尺集合，用于变更检测
+
+  tree t_prev= as_tree (call ("graphics-get-all-previous-points"));
+  if (is_tuple (t_prev) && N (t_prev) >= 2) {
+    int n_points= N (t_prev);
+
+    // 计算全局基线角：上一个绘制的点 (pk_1) 和上上一个绘制的点 (pk_2)
+    // 的连线倾角
+    double base_angle= 0.0;
+    point  pk_1      = as_point (t_prev[n_points - 1]);
+    point  pk_2      = as_point (t_prev[n_points - 2]);
+    if (N (pk_1) == 2 && N (pk_2) == 2) {
+      point pk_1_layout= f2 (pk_1);
+      point pk_2_layout= f2 (pk_2);
+      base_angle       = atan2 (pk_1_layout[1] - pk_2_layout[1],
+                                pk_1_layout[0] - pk_2_layout[0]);
+    }
+
+    point  fp_local       = f2[fp]; // 转换鼠标点到局部厘米坐标系
+    double snap_dist_local= f2->inverse_scalar (snap_distance);
+    for (int j= 0; j < n_points; ++j) {
+      point p1= as_point (t_prev[j]);
+      if (N (p1) != 2) continue;
+
+      point  v         = fp_local - p1;
+      double dist_to_p1= norm (v);
+      if (dist_to_p1 > 1e-5) {
+        double phi       = atan2 (v[1], v[0]);
+        double min_d     = -1.0;
+        double best_theta= 0.0;
+
+        // 遍历 30 度的倍数寻找最近方向（相对于 base_angle）
+        for (int k= -5; k <= 6; ++k) {
+          double rel_theta= k * M_PI / 6.0;
+          double theta    = base_angle + rel_theta;
+          double diff     = phi - theta;
+          double d        = dist_to_p1 * fabs (sin (diff));
+          if (min_d < 0.0 || d < min_d) {
+            min_d     = d;
+            best_theta= theta;
+          }
+        }
+
+        // 遍历 45 度的倍数寻找最近方向（相对于 base_angle）
+        for (int k= -3; k <= 4; ++k) {
+          if (k % 2 != 0) {
+            double rel_theta= k * M_PI / 4.0;
+            double theta    = base_angle + rel_theta;
+            double diff     = phi - theta;
+            double d        = dist_to_p1 * fabs (sin (diff));
+            if (d < min_d) {
+              min_d     = d;
+              best_theta= theta;
+            }
+          }
+        }
+
+        // 仅在鼠标靠近标尺且在吸附距离内时激活
+        if (min_d < snap_dist_local) {
+          point dir (cos (best_theta), sin (best_theta));
+          point p1_start_local   = p1 - 50.0 * dir;
+          point p1_end_local     = p1 + 50.0 * dir;
+          curve ghost_curve_local= segment (p1_start_local, p1_end_local);
+
+          double proj_dist      = dist_to_p1 * cos (phi - best_theta);
+          point  snapped_p_local= p1 + proj_dist * dir;
+
+          gr_selection sel;
+          sel->type= "ghost-curve-point";
+          sel->p   = f2 (snapped_p_local);
+          sel->dist= (SI) f2->direct_scalar (min_d);
+          sel->c   = f2 (ghost_curve_local);
+          sels << sel;
+
+          string sx= as_string (p1[0]);
+          string sy= as_string (p1[1]);
+          string st= as_string (best_theta);
+          tree   en (TUPLE);
+          en << sx;
+          en << sy;
+          en << st;
+          lines << en;
+          ghost_cur_set= ghost_cur_set * sx * "," * sy * "," * st * ";";
+        }
+      }
+    }
+  }
+
+  // PERF: 标尺集合与上次一致则跳过注册
+  if (ghost_cur_set != ghost_last_set) {
+    ghost_last_set= ghost_cur_set;
+    call ("graphics-set-ghost-lines", lines);
+  }
+}
+
+void
+register_midpoint (point fp, double snap_distance, point ms, string sx,
+                   string sy, tree& points, gr_selections& sels, array<path> cp,
+                   array<point> pts) {
+  for (int k= 0; k < N (points); k++)
+    if (points[k][0] == sx && points[k][1] == sy) return;
+  tree en (TUPLE);
+  en << sx;
+  en << sy;
+  points << en;
+  double d= norm (ms - fp);
+  if (d < snap_distance) {
+    gr_selection sel;
+    sel->type= "curve-mid-point";
+    sel->p   = ms;
+    sel->dist= (SI) d;
+    sel->cp  = cp;
+    sel->pts = pts;
+    sels << sel;
+  }
+}
+
+/**
+ * @brief 鼠标贴近线段时收集各直边中点：上报 scheme 显示绿点并追加吸附候选
+ * @param fp            鼠标位置（屏幕/布局坐标系）
+ * @param snap_distance 吸附距离（像素）
+ * @param sels          [inout] 当前命中集合（graphical_select 结果），
+ *                      命中时追加 curve-mid-point 候选
+ * @param f2            文档坐标系到屏幕坐标系的变换（f2[p] 为逆变换）
+ * @note 两条中点来源：一是命中集合中的文档曲线对象（curve-point /
+ *       curve-handle 命中），逐边经 straight_edge_midpoints 取中点；
+ *       二是折线（line/cline）绘制中的已落固定点——绘制中的对象尚未
+ *       进入文档树，graphical_select 选不到，由 scheme 侧
+ *       graphics-get-previous-line-points 提供（文档坐标系）。
+ *       显示条件是「鼠标贴近该线段本身」（seg_dist <= 吸附距离的一半，
+ *       在 straight_edge_midpoints 与本函数第二路径中统一施加），而非
+ *       落入整个吸附距离即可。每次鼠标移动都通过
+ *       graphics-set-midpoints 重新上报中点集合，变更检测与刷新放在
+ *       scheme 侧（C++ 侧缓存会在 graphics-decorations-reset 清空
+ *       scheme 状态后失同步）。
+ */
+static void
+snap_curve_midpoint (point fp, double snap_distance, gr_selections& sels,
+                     frame f2) {
+  tree points (TUPLE);
+  SI   on_line_tol= snap_distance / 2; // 压线容差：吸附距离的一半
+  if (check_snap_mode ("curve point")) {
+    int n= N (sels);
+    for (int i= 0; i < n; i++) {
+      // curve-handle（鼠标近端点）与 curve-point（鼠标近曲线内部）都说明
+      // 鼠标贴近该曲线对象；折线/多边形的每条直边单独取中点
+      string type= sels[i]->type;
+      if (type != "curve-point" && type != "curve-handle") continue;
+      curve c= sels[i]->c;
+      if (!is_polyline_or_segment (c)) continue;
+      array<point> mids= straight_edge_midpoints (c, fp, (double) on_line_tol);
+      for (int e= 0; e < N (mids); e++) {
+        point mid_local= f2[mids[e]]; // 转换到文档坐标系供装饰绘制
+        if (N (mid_local) != 2) continue;
+        register_midpoint (fp, snap_distance, mids[e], as_string (mid_local[0]),
+                           as_string (mid_local[1]), points, sels, sels[i]->cp,
+                           sels[i]->pts);
+      }
+    }
+    // 折线绘制中：对象尚未进入文档树，graphical_select 选不到，由
+    // scheme 提供已落固定点（文档坐标系），逐边做压线过滤后取中点
+    tree t_prev= as_tree (call ("graphics-get-previous-line-points"));
+    if (is_tuple (t_prev)) {
+      for (int i= 0; i + 1 < N (t_prev); i++) {
+        point a= as_point (t_prev[i]);
+        point b= as_point (t_prev[i + 1]);
+        if (N (a) != 2 || N (b) != 2) continue;
+        if (norm (b - a) < 1e-6) continue;
+        if (seg_dist (f2 (a), f2 (b), fp) > on_line_tol) continue;
+        point m= 0.5 * (a + b);
+        register_midpoint (fp, snap_distance, f2 (m), as_string (m[0]),
+                           as_string (m[1]), points, sels, array<path> (),
+                           array<point> ());
+      }
+    }
+  }
+  // 每次移动都重新上报，由 scheme 侧做变更检测并触发刷新：
+  // scheme 侧状态可能被 graphics-decorations-reset 清空，C++ 侧缓存
+  // 会与之处不同步（ghost line 每次移动同样会回调 scheme，开销一致）
+  call ("graphics-set-midpoints", points);
+}
+
 point
 edit_graphics_rep::adjust (point p) {
   frame f= find_frame ();
@@ -296,6 +516,10 @@ edit_graphics_rep::adjust (point p) {
   frame         f2  = find_frame (true);
   if (is_nil (f2)) return p;
   point fp= f2 (p);
+
+  snap_ghost_line (this, fp, snap_distance, sels, f2);
+  snap_curve_midpoint (fp, snap_distance, sels, f2);
+
   if ((tree) g != "empty_grid") {
     point q = g->find_point_around (p, snap_distance, f);
     point fq= f2 (q);
@@ -395,6 +619,9 @@ edit_graphics_rep::set_graphical_object (tree t) {
   // tree old_fr= env->local_begin (GR_FRAME, (tree) find_frame ());
   frame f_env= env->fr;
   env->fr    = find_frame ();
+  // 排版 go_box 借用了反映光标位置的环境，临时把 FILL_COLOR 置
+  // none，避免裸对象继承光标所在对象的填充色。
+  tree old_fc= env->local_begin (FILL_COLOR, "none");
   if (!is_nil (env->fr)) {
     int i, n= 0;
     go_box= typeset_as_concat (env, t, path (0));
@@ -415,6 +642,7 @@ edit_graphics_rep::set_graphical_object (tree t) {
       go_box= composite_box (path (0), bx);
     }
   }
+  env->local_end (FILL_COLOR, old_fc);
   env->fr= f_env;
   // env->local_end (GR_FRAME, old_fr);
 }
@@ -536,6 +764,9 @@ edit_graphics_rep::mouse_graphics (string type, SI x, SI y, int mods, time_t t,
     else if (type == "drop-object") call ("graphics-drop-object", sx, sy);
     invalidate_graphical_object ();
     notify_change (THE_CURSOR);
+    // 及时 call set_right_footer()，使坐标显示实时更新
+    edit_interface_rep* edit_if= dynamic_cast<edit_interface_rep*> (this);
+    if (edit_if != nullptr) edit_if->set_right_footer ();
     return true;
   }
   // cout << "No frame " << tp << ", " << subtree (et, path_up (tp)) << "\n";

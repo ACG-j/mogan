@@ -17,6 +17,7 @@
 #include <QPinchGesture>
 #include <QRubberBand>
 #include <QScrollBar>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QtTest/QtTest>
 
@@ -42,7 +43,12 @@ private slots:
     defaultMessageHandler= qInstallMessageHandler (filterTestWarnings);
   }
 
-  void init () { init_lolly (); }
+  void init () {
+    init_lolly ();
+    qRegisterMetaType<QVector<PdfOutlineItem>> ("QVector<PdfOutlineItem>");
+  }
+
+  void cleanup () { cleanup_qt_top_level_widgets (); }
 
   void test_creation () {
     PDFReaderWidget* widget= new PDFReaderWidget ();
@@ -211,6 +217,29 @@ private slots:
     delete widget;
   }
 
+  // 1221：复现生产代码 schedule_restore_pdf_last_page 的恢复路径——
+  // loadFromFile 后立即 singleShot(0) 跳页。页面懒渲染，布局未就绪时
+  // w->y() 全为 0，goToPage 实际滚回第 1 页。
+  void test_restoreLastPage_deferredJump () {
+    PDFReaderWidget* widget= new PDFReaderWidget ();
+    widget->resize (400, 300);
+    widget->show ();
+
+    url pdfUrl=
+        url_system ("$TEXMACS_PATH/tests/PDF/quartus_manual_with_outline.pdf");
+    if (is_regular (pdfUrl)) {
+      widget->loadFromFile (to_qstring (as_string (pdfUrl)));
+    }
+    QVERIFY (widget->pageCount () > 5);
+
+    QTimer::singleShot (0, widget, [widget] () { widget->goToPage (5); });
+    // 等渲染与布局稳定（懒渲染完成后页高才正确）
+    QTest::qWaitFor ([widget] () { return widget->currentPage () > 1; }, 5000);
+
+    QCOMPARE (widget->currentPage (), 5);
+    delete widget;
+  }
+
   void test_rectSelectModeApi () {
     // The rect-select button is now in PdfToolBar.
     // Verify the public API setRectSelectMode works.
@@ -271,16 +300,19 @@ private slots:
     QLabel* hint= widget->findChild<QLabel*> ("rectSelectHint");
     QVERIFY (hint != nullptr);
     QVERIFY (hint->isVisible ());
-    QVERIFY (hint->text ().contains ("Draw a rectangle"));
+    QVERIFY (hint->text ().contains ("Click two corners"));
 
-    // 模拟拖拽选择
+    // 模拟点击-移动-点击选择
     QWidget* vp= widget->viewport ();
     QVERIFY (vp != nullptr);
     QPoint start (50, 50);
     QPoint end (150, 150);
-    QTest::mousePress (vp, Qt::LeftButton, Qt::NoModifier, start);
-    QTest::mouseMove (vp, end);
-    QTest::mouseRelease (vp, Qt::LeftButton, Qt::NoModifier, end);
+    QTest::mouseClick (vp, Qt::LeftButton, Qt::NoModifier, start);
+    // 无按键的 mouseMove 需显式投递(QTest::mouseMove 不会送达)
+    QMouseEvent moveEvent (QEvent::MouseMove, end, vp->mapToGlobal (end),
+                           Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent (vp, &moveEvent);
+    QTest::mouseClick (vp, Qt::LeftButton, Qt::NoModifier, end);
     QApplication::processEvents ();
 
     // 选择完成后提示变为 Copied to Clipboard!
@@ -318,12 +350,14 @@ private slots:
     QWidget* vp= widget->viewport ();
     QVERIFY (vp != nullptr);
 
-    // 模拟拖拽选择
+    // 模拟点击-移动-点击选择
     QPoint start (50, 50);
     QPoint end (150, 150);
-    QTest::mousePress (vp, Qt::LeftButton, Qt::NoModifier, start);
-    QTest::mouseMove (vp, end);
-    QTest::mouseRelease (vp, Qt::LeftButton, Qt::NoModifier, end);
+    QTest::mouseClick (vp, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent moveEvent (QEvent::MouseMove, end, vp->mapToGlobal (end),
+                           Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent (vp, &moveEvent);
+    QTest::mouseClick (vp, Qt::LeftButton, Qt::NoModifier, end);
     QApplication::processEvents ();
 
     // 验证剪贴板有图片
@@ -448,8 +482,9 @@ private slots:
     QTest::mouseRelease (vp, Qt::LeftButton, Qt::NoModifier, end);
     QApplication::processEvents ();
 
-    // QScroller 的滚动更新是异步的，给一点时间让动画生效
-    QTest::qWait (100);
+    // QScroller 的滚动更新是异步的，轮询等待拖拽动画把滚动条值推进到预期
+    QVERIFY (
+        QTest::qWaitFor ([&] () { return vbar->value () < initialPos; }, 1000));
 
     int newPos= vbar->value ();
     QVERIFY (newPos < initialPos);
@@ -661,8 +696,9 @@ private slots:
     QTest::mouseRelease (vp, Qt::LeftButton, Qt::NoModifier, QPoint (50, 100));
     int releasePos= vbar->value ();
 
-    // 释放后等待一小段时间，惯性滚动应使值继续变化
-    QTest::qWait (80);
+    // 释放后惯性滚动应使值继续变化，轮询等待动画推进
+    QVERIFY (QTest::qWaitFor ([&] () { return vbar->value () != releasePos; },
+                              1000));
     int afterInertia= vbar->value ();
     QVERIFY (afterInertia != releasePos);
 
@@ -1470,6 +1506,63 @@ private slots:
     QVERIFY2 (
         qAbs (vbar->value () - initialScrollY) <= 5,
         "Scroll position did not return to original after round-trip zoom");
+    delete widget;
+  }
+
+  // -- outline 提取测试 --
+
+  void test_outlineLoaded_noOutlineEmitsEmpty () {
+    PDFReaderWidget* widget= new PDFReaderWidget ();
+    widget->resize (400, 300);
+    widget->show ();
+
+    QSignalSpy spy (widget,
+                    SIGNAL (outlineLoaded (const QVector<PdfOutlineItem>&)));
+
+    // pdf_1_4_sample.pdf 无大纲，应发出空 outline
+    url pdfUrl= url_system ("$TEXMACS_PATH/tests/PDF/pdf_1_4_sample.pdf");
+    if (is_regular (pdfUrl)) {
+      widget->loadFromFile (to_qstring (as_string (pdfUrl)));
+    }
+    QApplication::processEvents ();
+    QTest::qWait (200);
+
+    QCOMPARE (spy.count (), 1);
+    QList<QVariant>         args= spy.takeFirst ();
+    QVector<PdfOutlineItem> outline=
+        args.at (0).value<QVector<PdfOutlineItem>> ();
+    QVERIFY (outline.isEmpty ());
+
+    delete widget;
+  }
+
+  void test_outlineLoaded_withOutline () {
+    PDFReaderWidget* widget= new PDFReaderWidget ();
+    widget->resize (400, 300);
+    widget->show ();
+
+    QSignalSpy spy (widget,
+                    SIGNAL (outlineLoaded (const QVector<PdfOutlineItem>&)));
+
+    url pdfUrl=
+        url_system ("$TEXMACS_PATH/tests/PDF/quartus_manual_with_outline.pdf");
+    if (is_regular (pdfUrl)) {
+      widget->loadFromFile (to_qstring (as_string (pdfUrl)));
+    }
+    QApplication::processEvents ();
+    QTest::qWait (200);
+
+    QCOMPARE (spy.count (), 1);
+    QList<QVariant>         args= spy.takeFirst ();
+    QVector<PdfOutlineItem> outline=
+        args.at (0).value<QVector<PdfOutlineItem>> ();
+    // 该 PDF 应至少包含一个大纲条目
+    QVERIFY (!outline.isEmpty ());
+    // 第一个条目应有非空标题
+    QVERIFY (!outline.first ().title.isEmpty ());
+    // 第一个条目应解析到有效页码（>=0）
+    QVERIFY (outline.first ().page >= 0);
+
     delete widget;
   }
 };

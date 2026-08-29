@@ -12,12 +12,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (texmacs-module (texmacs menus file-menu)
-  (:use
-    (utils library cursor)
+  (:use (utils library cursor)
     (network url)
     (texmacs texmacs tm-server)
     (texmacs texmacs tm-files)
-    (texmacs menus print-widgets)))
+    (texmacs texmacs tm-collab)
+    (texmacs menus print-widgets)
+  ) ;:use
+) ;texmacs-module
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Dynamic menu for existing buffers
@@ -28,143 +30,232 @@
     (let* ((abbr (buffer-get-title name))
            (abbr* (if (== abbr "") (url->system (url-tail name)) abbr))
            (mod? (buffer-modified? name))
-           (short-name `(verbatim ,(string-append abbr* (if mod? " *" ""))))
-           (long-name `(verbatim ,(url->system name))))
-      ((check (balloon (eval short-name) (eval long-name)) "v"
-              (== (current-buffer) name))
-       (switch-to-buffer* name)))))
+           ;; 菜单条目同样经 set_text 按 herk 解码,中文文件名须先 utf8->herk
+           ;; (幂等:已是 herk 的草稿标题不变)
+           (short-name `(verbatim ,(utf8->herk (string-append abbr*
+                                                 (if mod? " *" "")))))
+           (long-name `(verbatim ,(utf8->herk (url->system name))))
+          ) ;
+      ((check (balloon (eval short-name) (eval long-name))
+         "v"
+         (== (current-buffer) name)
+       ) ;check
+       (switch-to-buffer* name)
+      ) ;
+    ) ;let*
+  ) ;for
+) ;tm-menu
 
 (tm-define (buffer-more-recent? b1 b2)
-  (>= (buffer-last-visited b1)
-      (buffer-last-visited b2)))
+  (>= (buffer-last-visited b1) (buffer-last-visited b2))
+) ;tm-define
 
 (tm-define (buffer-sorted-list)
-  (with l (list-filter (buffer-list) buffer-in-menu?)
-    (list-sort l buffer-more-recent?)))
+  (with l
+    (list-filter (buffer-list) buffer-in-menu?)
+    (list-sort l buffer-more-recent?)
+  ) ;with
+) ;tm-define
 
 (tm-define (buffer-menu-list nr)
   (let* ((l1 (list-filter (buffer-list) buffer-in-menu?))
-         (l2 (list-sort l1 buffer-more-recent?)))
-    (sublist l2 0 (min (length l2) nr))))
+         (l2 (list-sort l1 buffer-more-recent?))
+        ) ;
+    (sublist l2 0 (min (length l2) nr))
+  ) ;let*
+) ;tm-define
 
 (tm-define (buffer-menu-unsorted-list nr)
   (let* ((l1 (list-filter (buffer-list) buffer-in-menu?)))
-    (sublist l1 0 (min (length l1) nr))))
+    (sublist l1 0 (min (length l1) nr))
+  ) ;let*
+) ;tm-define
 
 (tm-define (buffer-go-menu)
   (let* ((l1 (list-difference (buffer-menu-list 15) (linked-file-list))))
-    (buffer-list-menu l1)))
+    (buffer-list-menu l1)
+  ) ;let*
+) ;tm-define
 
 (tm-define (buffer-windows-menu)
   (let* ((l1 (map window->buffer (window-list))))
-    (buffer-list-menu l1)))
+    (buffer-list-menu l1)
+  ) ;let*
+) ;tm-define
 
 (tm-define (buffer-invisible-list n)
   (let* ((l1 (list-difference (buffer-menu-list n) (linked-file-list)))
-         (l2 (map window->buffer (window-list))))
-    (list-difference l1 l2)))
+         (l2 (map window->buffer (window-list)))
+        ) ;
+    (list-difference l1 l2)
+  ) ;let*
+) ;tm-define
 
 (tm-define (buffer-invisible-menu)
-  (buffer-list-menu (buffer-invisible-list 25)))
+  (buffer-list-menu (buffer-invisible-list 25))
+) ;tm-define
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Dynamic menu for recent files
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (short-menu-name u)
-  (cond ((url-rooted-tmfs? u) (tmfs-title u `(document "")))
-        ((url-rooted-web? u)
-         (string-append (url->system (url-tail u))
-                        " @ " (url-host u)))
-        (else (url->system (url-tail u)))))
+  ;; 菜单条目经 set_text 按 herk 解码,文件名须先 utf8->herk(幂等)
+  (utf8->herk (cond ((collab-buffer? u)
+                     ;; 云文档标题存于 recent-files 的 name 字段（url-tail 是 UUID 非标题）；未命中回退 doc_id。
+                     (or (recent-files-get-name (url->system u)) (collab-url->doc-id u))
+                    ) ;
+                    ((url-rooted-tmfs? u) (tmfs-title u '(document "")))
+                    ((url-rooted-web? u)
+                     (string-append (url->system (url-tail u)) " @ " (url-host u))
+                    ) ;
+                    (else (url->system (url-tail u)))
+              ) ;cond
+  ) ;utf8->herk
+) ;define
 
 (define (long-menu-name u)
-  (url->system u))
+  (utf8->herk (url->system u))
+) ;define
 
 (tm-menu (file-list-menu l win?)
   (for (name l)
     (let* ((short-name `(verbatim ,(short-menu-name name)))
-           (long-name `(verbatim ,(long-menu-name name))))
+           (long-name `(verbatim ,(long-menu-name name)))
+          ) ;
       ((balloon (eval short-name) (eval long-name))
-       (begin 
-          (if win? (load-document name) (load-buffer name))
-          (when (not (url-exists? (url->system name))) 
-                (recent-files-remove-by-path (url->system name))))))))
+       (begin
+         ;; 云文档按 doc_id 重新 join（非 load 文件）；带上存储里的 title，否则
+         ;; collab-join-document 名字缺省 → buffer 标题退化为 UUID。本地按 win? 走 load-document/load-buffer。
+         ;; collab 分派叠 (loro-enabled?)：loro=no 下云 glue 未注册，残留云条目改走 load-* 优雅失败。
+         (if (and (collab-buffer? name) (loro-enabled?))
+           (collab-join-document (collab-url->doc-id name)
+             (or (recent-files-get-name (url->system name)) "")
+           ) ;collab-join-document
+           (if win? (load-document name) (load-buffer name))
+         ) ;if
+         ;; 缺失清理仅对本地文件：云 URL 非磁盘路径，url-exists? 必假，不可据此误删。
+         (when (and (not (collab-buffer? name)) (not (url-exists? (url->system name))))
+           (recent-files-remove-by-path (url->system name))
+         ) ;when
+       ) ;begin
+      ) ;
+    ) ;let*
+  ) ;for
+) ;tm-menu
 
 (tm-define (recent-file-list nr)
   (let* ((l1 (map cdar (learned-interactive "recent-buffer")))
          (l2 (map system->url l1))
-         (l3 (list-filter l2 buffer-in-recent-menu?)))
-    (sublist l3 0 (min (length l3) nr))))
+         (l3 (list-filter (list-remove-duplicates l2) buffer-in-recent-menu?))
+        ) ;
+    (sublist l3 0 (min (length l3) nr))
+  ) ;let*
+) ;tm-define
 
 (tm-define (recent-unloaded-file-list nr)
   (let* ((l1 (map cdar (learned-interactive "recent-buffer")))
          (l2 (map system->url l1))
-         (l3 (list-filter l2 buffer-in-recent-menu?))
-         (dl (list-difference l3 (buffer-list))))
-    (sublist dl 0 (min (length dl) nr))))
+         (l3 (list-filter (list-remove-duplicates l2) buffer-in-recent-menu?))
+         (dl (list-difference l3 (buffer-list)))
+        ) ;
+    (sublist dl 0 (min (length dl) nr))
+  ) ;let*
+) ;tm-define
 
 (tm-define (recent-directory-list nr)
   (let* ((l1 (recent-file-list nr))
          (l2 (map url-head l1))
-         (l3 (list-remove-duplicates l2)))
-    (list-filter l3 (cut url-rooted-protocol? <> "default"))))
+         (l3 (list-remove-duplicates l2))
+        ) ;
+    (list-filter l3 (cut url-rooted-protocol? <> "default"))
+  ) ;let*
+) ;tm-define
 
-(tm-define (recent-file-menu)
-  (file-list-menu (recent-file-list 25) #t))
+(tm-define (recent-file-menu) (file-list-menu (recent-file-list 25) #t))
 
 (tm-define (recent-unloaded-file-menu)
-  (with l (list-difference (recent-unloaded-file-list 15) (linked-file-list))
-    (file-list-menu l #f)))
+  (with l
+    (list-difference (recent-unloaded-file-list 15) (linked-file-list))
+    (file-list-menu l #f)
+  ) ;with
+) ;tm-define
 
 (tm-define (linked-file-menu)
-  (file-list-menu (list-remove-duplicates (linked-file-list)) #f))
+  (file-list-menu (list-remove-duplicates (linked-file-list)) #f)
+) ;tm-define
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Dynamic menus for formats
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (tm-menu (import-menu flag?)
-  (with l (filter (lambda (x)
-                    (and (not (in? x (image-formats)))
-                         (or (with-developer-tool?)
-                             (and (not (string=? x "mgs"))
-                                  (not (string=? x "stm"))))))
-                  (converters-to-special "texmacs-file" "-file" #f))
+  (with l
+    (filter (lambda (x)
+              (and (not (in? x (image-formats)))
+                (or (with-developer-tool?)
+                  (and (not (string=? x "stm")) (not (string=? x "stem")))
+                ) ;or
+              ) ;and
+            ) ;lambda
+      (converters-to-special "texmacs-file" "-file" #f)
+    ) ;filter
     (for (fm l)
       (let* ((name (format-get-name fm))
              (load-text (string-append "Load " (string-downcase name) " file"))
-             (import-text `(concat "Import " ,name))
+             (import-text `(concat ,"Import " ,name))
              (text (if flag? import-text name))
-             (format (if (== fm "verbatim") "text" fm)))
-        ((eval text) (choose-file (buffer-importer fm) load-text format))))))
+             (format (if (== fm "verbatim") "text" fm))
+            ) ;
+        ((eval text) (choose-file (buffer-importer fm) load-text format))
+      ) ;let*
+    ) ;for
+  ) ;with
+) ;tm-menu
 
 (tm-define (import-top-menu) (import-menu #t))
 (tm-define (import-import-menu) (import-menu #f))
 
 (define (export-latex-file dest)
-  (with opts '(("texmacs->latex:progress" . "on"))
-    (with s (texmacs->latex-document (buffer-get (current-buffer)) opts)
+  (with opts
+    '(("texmacs->latex:progress" . "on"))
+    (with s
+      (texmacs->latex-document (buffer-get (current-buffer)) opts)
       (string-save s dest)
-      (set-message `(concat "Exported " ,(url->system dest)) "Export LaTeX"))))
+      (save-buffer-save (current-buffer) (list) "latex_export")
+      (set-message `(concat ,"Exported " ,(url->system dest)) "Export LaTeX")
+    ) ;with
+  ) ;with
+) ;define
 
 (tm-menu (export-menu flag?)
-  (with l (converters-from-special "texmacs-file" "-file" #f)
-    (with l2 (filter (lambda (x)
-                       (and (not (string=? x "tmu"))
-                            (not (string=? x "latex"))
-                            (not (string=? x "latex-class"))
-                            (or (with-developer-tool?)
-                                (and (not (string=? x "mgs"))
-                                     (not (string=? x "stm"))))))
-                     l)
+  (with l
+    (converters-from-special "texmacs-file" "-file" #f)
+    (with l2
+      (filter (lambda (x)
+                (and (not (string=? x "tmu"))
+                  (not (string=? x "latex"))
+                  (not (string=? x "latex-class"))
+                  (or (with-developer-tool?)
+                    (and (not (string=? x "stm")) (not (string=? x "stem")))
+                  ) ;or
+                ) ;and
+              ) ;lambda
+        l
+      ) ;filter
       (for (fm l2)
         (let* ((name (format-get-name fm))
                (save-text (string-append "Save " (string-downcase name) " file"))
-               (export-text `(concat "Export as " ,name))
+               (export-text `(concat ,"Export as " ,name))
                (text (if flag? export-text name))
-               (format (if (== fm "verbatim") "text" fm)))
-          ((eval text) (choose-file (buffer-exporter fm) save-text format)))))))
+               (format (if (== fm "verbatim") "text" fm))
+              ) ;
+          ((eval text) (choose-file (buffer-exporter fm) save-text format))
+        ) ;let*
+      ) ;for
+    ) ;with
+  ) ;with
+) ;tm-menu
 
 (tm-define (export-top-menu) (export-menu #t))
 (tm-define (export-export-menu) (export-menu #f))
@@ -174,89 +265,96 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (menu-bind new-file-menu
-  (if (window-per-buffer?)
-      ("New window" (new-document)))
+  (if (window-per-buffer?) ("New window" (new-document)))
   (if (not (window-per-buffer?))
-      ("New document" (new-document))
-      ("New window" (new-document*)))
-  ;;("Clone window" (clone-window))
-  )
+   ("New document" (new-document))
+   ("New window" (new-document*))
+  ) ;if
+  ;; ("Clone window" (clone-window))
+) ;menu-bind
 
 (menu-bind load-menu
-  ("Load" (open-document))
-  ("Revert" (revert-buffer))
-  (if (not (window-per-buffer?))
-      ("Load in new window" (open-document*)))
-  ---
-  (link import-top-menu)
-  (if (nnull? (recent-file-list 1))
-      ---
-      (link recent-file-menu)))
+ ("Load" (open-document))
+ ("Revert" (revert-buffer))
+ (if (not (window-per-buffer?)) ("Load in new window" (open-document*)))
+ ---
+ (link import-top-menu)
+ (if (nnull? (recent-file-list 1)) --- (link recent-file-menu))
+) ;menu-bind
 
 (menu-bind export-as-image-menu
-  (for (fm (filter (lambda (x) (file-converter-exists? "x.pdf" (string-append "y."  x))) (image-formats)) )
-    ((eval (upcase-first fm))
-     (choose-file export-selection-as-graphics
-                  "Export selection as image" fm))))
+  (for (fm (filter (lambda (x) (file-converter-exists? "x.pdf" (string-append "y." x)))
+             (image-formats)
+           ) ;filter
+       ) ;fm
+   ((eval (upcase-first fm))
+    (choose-file export-selection-as-graphics "Export selection as image" fm)
+   ) ;
+  ) ;for
+) ;menu-bind
 
 (menu-bind save-menu
-  ("Save" (save-buffer))
-  ("Save as" (choose-file save-buffer-as "Save TeXmacs file" "action_save_as"))
-  ---
-  (link export-top-menu)
-  ---
-  ((eval '(concat "Export as " "Pdf"))
-   (choose-file wrapped-print-to-file "Save pdf file" "pdf"))
-  ((eval '(concat "Export as " "PostScript"))
-   (choose-file wrapped-print-to-file "Save postscript file" "postscript"))
-  (when (selection-active-any?)
-    (=> "Export selection as image"
-        (link export-as-image-menu))))
+ ("Save" (save-buffer))
+ ((eval (if (collab-buffer? (current-buffer)) "Download" "Save as"))
+  (choose-file save-buffer-as "Save TeXmacs file" "action_save_as")
+ ) ;
+ ---
+ (link export-top-menu)
+ ---
+ ((eval '(concat "Export as " "Pdf"))
+  (choose-file wrapped-print-to-file "Save pdf file" "pdf")
+ ) ;
+ ((eval '(concat "Export as " "PostScript"))
+  (choose-file wrapped-print-to-file "Save postscript file" "postscript")
+ ) ;
+ (when (selection-active-any?)
+   (=> "Export selection as image" (link export-as-image-menu))
+ ) ;when
+) ;menu-bind
 
 (menu-bind print-menu-sub
   (if (has-printing-cmd?)
-      ("Print buffer" (print-buffer))
-      ("Print page selection" (interactive print-pages)))
+   ("Print buffer" (print-buffer))
+   ("Print page selection" (interactive print-pages))
+  ) ;if
   ("Print buffer to file"
-   (choose-file print-to-file "Print all to file" "postscript"))
+    (choose-file print-to-file "Print all to file" "postscript")
+  ) ;
   ("Print page selection to file"
-   (interactive choose-file-and-print-page-selection)))
+    (interactive choose-file-and-print-page-selection)
+  ) ;
+) ;menu-bind
 
 (menu-bind print-menu
-  ("Preview" (preview-buffer))
-  (if (use-print-dialog?)
-      (if (has-printing-cmd?) ("Print" (print-buffer)))
-      ("Print to file"
-       (choose-file print-to-file "Print all to file" "postscript")))
-  (if (not (use-print-dialog?))
-      (-> "Print" (link print-menu-sub)))
-  (if (use-menus?)
-      (-> "Page setup" (link page-setup-menu)))
-  (if (use-popups?)
-      ("Page setup" (open-page-setup))))
+ ("Preview" (preview-buffer))
+ (if (use-print-dialog?)
+   (if (has-printing-cmd?) ("Print" (print-buffer)))
+   ("Print to file" (choose-file print-to-file "Print all to file" "postscript"))
+ ) ;if
+ (if (not (use-print-dialog?)) (-> "Print" (link print-menu-sub)))
+ (if (use-menus?) (-> "Page setup" (link page-setup-menu)))
+ (if (use-popups?) ("Page setup" (open-page-setup)))
+) ;menu-bind
 
 (menu-bind print-menu-inline
-  ("Preview" (preview-buffer))
-  (if (use-print-dialog?)
-      (if (has-printing-cmd?) ("Print" (print-buffer)))
-      ("Print to file"
-       (choose-file print-to-file "Print all to file" "postscript")))
-  (if (not (use-print-dialog?))
-      ---
-      (link print-menu-sub)
-      ---)
-  (if (use-menus?)
-      (-> "Page setup" (link page-setup-menu)))
-  (if (use-popups?)
-      ("Page setup" (open-page-setup))))
+ ("Preview" (preview-buffer))
+ (if (use-print-dialog?)
+   (if (has-printing-cmd?) ("Print" (print-buffer)))
+   ("Print to file" (choose-file print-to-file "Print all to file" "postscript"))
+ ) ;if
+ (if (not (use-print-dialog?)) --- (link print-menu-sub) ---)
+ (if (use-menus?) (-> "Page setup" (link page-setup-menu)))
+ (if (use-popups?) ("Page setup" (open-page-setup)))
+) ;menu-bind
 
 (menu-bind close-menu
-  (if (window-per-buffer?)
-      ("Close window" (close-document)))
+  (if (window-per-buffer?) ("Close window" (close-document)))
   (if (not (window-per-buffer?))
-      ("Close document" (close-document))
-      ("Close window" (close-document*)))
-  ("Close TeXmacs" (safely-quit-TeXmacs)))
+   ("Close document" (close-document))
+   ("Close window" (close-document*))
+  ) ;if
+  ("Close TeXmacs" (safely-quit-TeXmacs))
+) ;menu-bind
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The File menu
@@ -265,75 +363,127 @@
 (define (wrapped-import-pdf-embeded-with-tm tem-pdf)
   (let* ((tem-dir (url-temp-dir))
          (tem-tm (url-append tem-dir "tem.tm"))
-         (tem-tm2 (url-append tem-dir "extracted.tm")))
+         (tem-tm2 (url-append tem-dir "extracted.tm"))
+        ) ;
     (if (extract-attachments tem-pdf)
-        (begin
-          (string-save
-            (serialize-texmacs
-              (pdf-replace-linked-path
-                (tree-import (url-relative tem-tm (pdf-get-attached-main-tm tem-pdf)) "texmacs")
-                tem-pdf))
-            tem-tm2)
-          (load-buffer tem-tm2))
-        (begin
-          (notify-now "Can not extract attachments from PDF")
-          (texmacs-error "pdf" "Can not extract attachments from PDF")))))
+      (begin
+        (string-save (serialize-texmacs (pdf-replace-linked-path (tree-import (url-relative tem-tm (pdf-get-attached-main-tm tem-pdf)) "texmacs")
+                                          tem-pdf
+                                        ) ;pdf-replace-linked-path
+                     ) ;serialize-texmacs
+          tem-tm2
+        ) ;string-save
+        (load-buffer tem-tm2)
+      ) ;begin
+      (begin
+        (notify-now "Can not extract attachments from PDF")
+        (texmacs-error "pdf" "Can not extract attachments from PDF")
+      ) ;begin
+    ) ;if
+  ) ;let*
+) ;define
 
 (define (wrapped-import-pdf-embeded-with-tmu tem-pdf)
   (let* ((tem-dir (url-temp-dir))
          (tem-tmu (url-append tem-dir "tem.tmu"))
-         (tem-tmu2 (url-append tem-dir "extracted.tmu")))
+         (tem-tmu2 (url-append tem-dir "extracted.tmu"))
+        ) ;
     (if (extract-attachments tem-pdf)
-        (begin
-          (string-save
-            (serialize-tmu
-              (pdf-replace-linked-path
-                (tree-import (url-relative tem-tmu (pdf-get-attached-main-tm tem-pdf)) "tmu")
-                tem-pdf))
-            tem-tmu2)
-          (load-buffer tem-tmu2))
-        (begin
-          (notify-now "Can not extract attachments from PDF")
-          (texmacs-error "pdf" "Can not extract attachments from PDF")))))
+      (begin
+        (string-save (serialize-tmu (pdf-replace-linked-path (tree-import (url-relative tem-tmu (pdf-get-attached-main-tm tem-pdf)) "tmu")
+                                      tem-pdf
+                                    ) ;pdf-replace-linked-path
+                     ) ;serialize-tmu
+          tem-tmu2
+        ) ;string-save
+        (load-buffer tem-tmu2)
+      ) ;begin
+      (begin
+        (notify-now "Can not extract attachments from PDF")
+        (texmacs-error "pdf" "Can not extract attachments from PDF")
+      ) ;begin
+    ) ;if
+  ) ;let*
+) ;define
 
 (menu-bind file-menu
-  ("New" (new-document))
-  ("Load" (open-document))
-  ("Revert" (revert-buffer))
-  (-> "Recent"
-      (link recent-file-menu)
-      (if (nnull? (recent-file-list 1)) ---)
-      (when (nnull? (recent-file-list 1))
-        ("Clear menu" (forget-interactive "recent-buffer"))))
-  ---
-  ("Save" (save-buffer))
-  ("Save as" (choose-file save-buffer-as "Save TeXmacs file" "action_save_as"))
-  ---
-  (link print-menu)
-  ---
-  (-> "Import"
-      (link import-import-menu)
+ ("New" (new-document))
+ ("Load" (open-document))
+ (if (qt-gui?)
+   ;; ImGui 前端精简：仅保留 New / Load / Save，以下 Revert/Recent 等仅在 Qt 显示
+   ("Revert" (revert-buffer))
+   (-> "Recent"
+     (link recent-file-menu)
+     (if (nnull? (recent-file-list 1)) ---)
+     (when (nnull? (recent-file-list 1))
+       ("Clear menu" (forget-interactive "recent-buffer"))
+     ) ;when
+   ) ;->
+   ---
+ ) ;if
+ ("Save" (save-buffer))
+ ((eval (if (collab-buffer? (current-buffer)) "Download" "Save as"))
+  (choose-file save-buffer-as "Save TeXmacs file" "action_save_as")
+ ) ;
+ (if (loro-enabled?)
+   (-> "Collaborative"
+     ;; 未配置服务端：仅显示设置项，引导先填地址/端口。
+     (if (not (collab-server-configured?))
+      ("Set server address..." (collab-configure-server))
+     ) ;if
+     ;; 已配置：完整协作菜单 + 修改服务端入口。
+     (if (collab-server-configured?)
+      ("New shared document" (collab-new-document))
+      ("New shared document from file" (collab-new-document-from-file))
+      (-> "Join shared document" (link collab-docs-menu))
+      (if (loro-collab-active?)
+        ---
+        ("Leave session" (collab-leave))
+        ("Show document UUID" (set-message (loro-collab-doc-id) "Collaborative"))
+      ) ;if
       ---
-      ("Pdf with embedded document" (choose-file wrapped-import-pdf-embeded-with-tmu "Import pdf file" "tmu.pdf")))
-  (-> "Export"
-      (link export-export-menu)
-      ---
-      (when (defined? 'texmacs->latex-document)
-        ("LaTeX" (choose-file export-latex-file "Save LaTeX file" "latex")))
-      ("TM document" (choose-file save-buffer-as "Save TeXmacs file" "texmacs"))
-      ("Pdf" (choose-file wrapped-print-to-file "Save pdf file" "pdf"))
-      ("Pdf with embedded document" (choose-file wrapped-print-to-pdf-embeded-with-tmu "Save tmu.pdf file" "tmu.pdf"))
-      ("Postscript"
-       (choose-file wrapped-print-to-file "Save postscript file" "postscript"))
-      (when (selection-active-any?)
-        (=> "Export selection as image"
-            (link export-as-image-menu))))
-  ---
-  (if (window-per-buffer?)
-      ("Close window" (close-document)))
-  (if (not (window-per-buffer?))
-      ("Close document" (close-document)))
-  ("Close TeXmacs" (safely-quit-TeXmacs)))
+      ("Change server address..." (collab-configure-server))
+     ) ;if
+   ) ;->
+ ) ;if
+ (if (qt-gui?)
+   ---
+   (link print-menu)
+   ---
+   (-> "Import"
+     (link import-import-menu)
+     ---
+     ("Pdf with embedded document"
+       (choose-file wrapped-import-pdf-embeded-with-tmu "Import pdf file" "tmu.pdf")
+     ) ;
+   ) ;->
+   (-> "Export"
+     (link export-export-menu)
+     ---
+     (when (defined? 'texmacs->latex-document)
+       ("LaTeX" (choose-file export-latex-file "Save LaTeX file" "latex"))
+     ) ;when
+     ("TM document" (choose-file save-buffer-as "Save TeXmacs file" "texmacs"))
+     ("Pdf" (choose-file wrapped-print-to-file "Save pdf file" "pdf"))
+     ("Pdf with embedded document"
+       (choose-file wrapped-print-to-pdf-embeded-with-tmu
+         "Save tmu.pdf file"
+         "tmu.pdf"
+       ) ;choose-file
+     ) ;
+     ("Postscript"
+       (choose-file wrapped-print-to-file "Save postscript file" "postscript")
+     ) ;
+     (when (selection-active-any?)
+       (=> "Export selection as image" (link export-as-image-menu))
+     ) ;when
+   ) ;->
+   ---
+   (if (window-per-buffer?) ("Close window" (close-document)))
+   (if (not (window-per-buffer?)) ("Close document" (close-document)))
+   ("Close TeXmacs" (safely-quit-TeXmacs))
+ ) ;if
+) ;menu-bind
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The Go menu
@@ -341,43 +491,34 @@
 
 (menu-bind go-menu
   (when (cursor-has-history?)
-    ("Back" (cursor-history-backward)))
+    ("Back" (cursor-history-backward))
+  ) ;when
   (when (cursor-has-future?)
-    ("Forward" (cursor-history-forward)))
+    ("Forward" (cursor-history-forward))
+  ) ;when
   ("Save position" (cursor-history-add (cursor-path)))
   ---
   (if (not (window-per-buffer?))
-      (link buffer-go-menu)
-      (if (nnull? (linked-file-list))
-          ---
-          (link linked-file-menu))
-      (if (nnull? (recent-unloaded-file-list 1))
-          ---
-          (link recent-unloaded-file-menu))
-      (if (nnull? (bookmarks-menu))
-          ---
-          (link bookmarks-menu)))
+    (link buffer-go-menu)
+    (if (nnull? (linked-file-list)) --- (link linked-file-menu))
+    (if (nnull? (recent-unloaded-file-list 1)) --- (link recent-unloaded-file-menu))
+    (if (nnull? (bookmarks-menu)) --- (link bookmarks-menu))
+  ) ;if
   (if (window-per-buffer?)
-      (group "Windows")
-      (link buffer-windows-menu)
-      ---
-      (group "Buffer in this window")
-      ("New" (new-document*))
-      ("Load" (open-document*))
-      (if (nnull? (buffer-invisible-list 25))
-          (-> "Hidden"
-              ---
-              (link buffer-invisible-menu)))
-      (if (nnull? (linked-file-list))
-          (-> "Linked"
-              ---
-              (link linked-file-menu)))
-      (if (nnull? (recent-unloaded-file-list 1))
-          (-> "Recent"
-              ---
-              (link recent-unloaded-file-menu)))
-      (if (nnull? (bookmarks-menu))
-          (-> "Bookmarks"
-              ---
-              (link bookmarks-menu)))
-      ("Close" (close-document*))))
+    (group "Windows")
+    (link buffer-windows-menu)
+    ---
+    (group "Buffer in this window")
+    ("New" (new-document*))
+    ("Load" (open-document*))
+    (if (nnull? (buffer-invisible-list 25))
+      (-> "Hidden" --- (link buffer-invisible-menu))
+    ) ;if
+    (if (nnull? (linked-file-list)) (-> "Linked" --- (link linked-file-menu)))
+    (if (nnull? (recent-unloaded-file-list 1))
+      (-> "Recent" --- (link recent-unloaded-file-menu))
+    ) ;if
+    (if (nnull? (bookmarks-menu)) (-> "Bookmarks" --- (link bookmarks-menu)))
+    ("Close" (close-document*))
+  ) ;if
+) ;menu-bind

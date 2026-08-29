@@ -76,21 +76,21 @@
 
 (define-public (cAr l) "Get last element of @l." (car (last-pair l)))
 
-(define-public (cDr l)
-  "Remove last element from @l."
-  (reverse (cdr (reverse l)))
-) ;define-public
+(define-public (cDr l) "Remove last element from @l." (list-drop-right l 1))
 
-(define-public (cADr l) "Get before last element of @l." (cadr (reverse l)))
+(define-public (cADr l)
+  "Get before last element of @l."
+  (car (list-take-right l 2))
+) ;define-public
 
 (define-public (cDDr l)
   "Remove two last elements from @l"
-  (reverse (cddr (reverse l)))
+  (list-drop-right l 2)
 ) ;define-public
 
 (define-public (cDDDr l)
-  "Remove two last elements from @l"
-  (reverse (cdddr (reverse l)))
+  "Remove three last elements from @l"
+  (list-drop-right l 3)
 ) ;define-public
 
 (define-public (cDdr l) "Remove first and last elements from @l" (cDr (cdr l)))
@@ -117,20 +117,7 @@
 ;; Extraction of sublists
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define-public (list-head lis k)
-  (let recur
-    ((lis lis) (k k))
-    (if (zero? k) '() (cons (car lis) (recur (cdr lis) (- k 1))))
-  ) ;let
-) ;define-public
-
-(define-public (list-tail lis k)
-  (let iter
-    ((lis lis) (k k))
-    (if (zero? k) lis (iter (cdr lis) (- k 1)))
-  ) ;let
-) ;define-public
-
+(define-public (list-head lis k) (g_take lis k))
 
 (define-public list-take list-head)
 ;; SRFI-1
@@ -139,12 +126,12 @@
 
 (define-public (list-take-right l i)
   "Return the last @i elements of @l."
-  (list-tail l (- (length l) i))
+  (g_take_right l i)
 ) ;define-public
 
 (define-public (list-drop-right l i)
   "Return all but the last @i elements of @l."
-  (list-head l (- (length l) i))
+  (g_drop_right l i)
 ) ;define-public
 
 (define-public (sublist l i j)
@@ -179,10 +166,7 @@
 (define-public (list-fold kons knil list1 . rest)
   "Fundamental list iterator."
   (if (null? rest)
-    (let f
-      ((knil knil) (list1 list1))
-      (if (null? list1) knil (f (kons (car list1) knil) (cdr list1)))
-    ) ;let
+    (g_fold kons knil list1)
     (let f
       ((knil knil) (lists (cons list1 rest)))
       (if (list-any null? lists)
@@ -198,10 +182,7 @@
 (define-public (list-fold-right kons knil clist1 . rest)
   "Fundamental list recursion operator."
   (if (null? rest)
-    (let f
-      ((list1 clist1))
-      (if (null? list1) knil (kons (car list1) (f (cdr list1))))
-    ) ;let
+    (g_fold_right kons knil clist1)
     (let f
       ((lists (cons clist1 rest)))
       (if (list-any null? lists)
@@ -262,7 +243,7 @@
 
 (define-public (list-filter l pred?)
   "Return the list of elements from @l which match @pred?."
-  (apply append (map (lambda (x) (if (pred? x) (list x) (list))) l))
+  (g_filter pred? l)
 ) ;define-public
 
 (provide-public (filter-map fun . args)
@@ -338,19 +319,9 @@
   (append-map (lambda (x) (list (car x) (cdr x))) l)
 ) ;define-public
 
-(define-public (forall? pred? l)
-  (cond ((null? l) #t)
-        ((not (pred? (car l))) #f)
-        (else (forall? pred? (cdr l)))
-  ) ;cond
-) ;define-public
+(define-public exists? g_any)
 
-(define-public (exists? pred? l)
-  (cond ((null? l) #f)
-        ((pred? (car l)) (pred? (car l)))
-        (else (exists? pred? (cdr l)))
-  ) ;cond
-) ;define-public
+(define-public forall? g_every)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Search and replace
@@ -358,10 +329,7 @@
 
 (define-public (list-find l pred?)
   "Applies @pred? on elements of @l until it evaluates to true."
-  (let next
-    ((l l))
-    (if (null? l) #f (if (pred? (car l)) (car l) (next (cdr l))))
-  ) ;let
+  (g_find pred? l)
 ) ;define-public
 
 (define-public (list-find-index l pred?)

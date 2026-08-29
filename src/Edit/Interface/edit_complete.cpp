@@ -19,6 +19,7 @@
 #include "observers.hpp"
 #include "preferences.hpp"
 #include "tree_observer.hpp"
+#include "tree_traverse.hpp"
 
 #include <moebius/data/scheme.hpp>
 
@@ -176,9 +177,11 @@ edit_interface_rep::complete_start (string prefix, array<string> compls) {
     }
     cursor cu= eb->find_check_cursor (tp1);
     if (completion_style == string ("popup")) {
+#ifdef QTTEXMACS
       show_completion_popup ("text", tp, full_completions, cu, magf,
                              get_scroll_x (), get_scroll_y (), get_canvas_x (),
                              get_canvas_y ());
+#endif
     }
 
     insert_tree (completions[0]);
@@ -237,11 +240,15 @@ edit_interface_rep::complete_popup (string key) {
 
   if (key == "tab" || key == "down") {
     completion_pos++;
+#ifdef QTTEXMACS
     completion_popup_next (true);
+#endif
   }
   else if (key == "S-tab" || key == "up") {
     completion_pos--;
+#ifdef QTTEXMACS
     completion_popup_next (false);
+#endif
   }
   if (completion_pos < 0) completion_pos= completions_N - 1;
   if (completion_pos >= completions_N) completion_pos= 0;
@@ -305,9 +312,11 @@ edit_interface_rep::complete_variant (string old_completion,
   insert (path_up (tp) * (end - old_completion_N), new_completion);
   apply_changes ();
 
+#ifdef QTTEXMACS
   update_completion_popup_position (et, eb, tp, magf, get_scroll_x (),
                                     get_scroll_y (), get_canvas_x (),
                                     get_canvas_y (), completion_pos);
+#endif
 }
 
 /******************************************************************************
@@ -347,7 +356,8 @@ edit_interface_rep::session_complete_command (tree tt) {
   (void) eval ("(use-modules (utils plugins plugin-cmd))");
   string lan= get_env_string (PROG_LANGUAGE);
   string ses= get_env_string (PROG_SESSION);
-  string s  = as_string (call ("verbatim-serialize", lan, tree_to_stree (t)));
+  tree   u  = tree_herk_to_utf8 (t);
+  string s  = as_string (call ("utf8raw-serialize", lan, tree_to_stree (u)));
   s         = s (0, N (s) - 1);
 
   int pos= search_forwards (cursor_symbol, s);

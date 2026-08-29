@@ -14,8 +14,8 @@
 (texmacs-module (database bib-db)
   (:use (database db-convert)
         (database db-edit)
-        (data bibtex)
-        (convert bibtex bibtexout)))
+        (latex bibtex-format)
+        (latex convert-bibtex-bibtexout)))
 
 (tm-define (bib-database) (user-database "bib"))
 

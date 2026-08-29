@@ -1,0 +1,30 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; MODULE      : maxima-kbd.scm
+;; DESCRIPTION : Keyboard shortcuts for Maxima
+;; COPYRIGHT   : (C) 2005  Joris van der Hoeven
+;;
+;; This software falls under the GNU general public license version 3 or later.
+;; It comes WITHOUT ANY WARRANTY WHATSOEVER. For details, see the file LICENSE
+;; in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(texmacs-module (maxima maxima-kbd)
+  (:use (dynamic scripts-kbd)
+    (utils plugins plugin-cmd)
+    (utils plugins plugin-convert)
+  ) ;:use
+) ;texmacs-module
+
+(texmacs-modes (maxima-scripts-math% #t maxima-scripts% in-math%))
+
+(kbd-map (:mode maxima-scripts-math?) (": =" (insert '(script-assign))))
+
+(kbd-map (:mode in-maxima?) (:mode in-math?) ("$" "$"))
+
+(when (supports-maxima?)
+  (lazy-input-converter (maxima maxima-input) maxima)
+  (plugin-approx-command-set! "maxima" "float")
+) ;when

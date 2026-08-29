@@ -12,11 +12,13 @@
 #include "qt_chat_controller.hpp"
 #include "qt_chat_tab_widget.hpp"
 #include "qt_floating_search_bar.hpp"
+#include "qt_floating_toast.hpp"
 #include "qt_utilities.hpp"
 
 #include "new_buffer.hpp"
 #include "s7_tm.hpp"
 #include "scheme.hpp"
+#include "tm_debug.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -54,7 +56,12 @@ ChatController::destroyView () {
 QWidget*
 ChatController::createView (QWidget* parent, qt_tm_widget_rep* tm) {
   // 1. Load session metadata
+  // llm 插件按 idle 延迟初始化，新建 Chat 标签页时其 scheme 模块可能尚未加载
+  bool benching= QTChatTabWidget::isInitBenchPending ();
+  if (benching) bench_start ("chat_init: load chat modules");
+  eval ("(use-modules (llm chat-list))");
   call ("chat-persist-load-all");
+  if (benching) bench_end ("chat_init: load chat modules");
   cout << "[chat-persist] ChatController: restored "
        << sessionManager_.sessionCount () << " session metadatas" << LF;
 
@@ -125,12 +132,14 @@ ChatController::createView (QWidget* parent, qt_tm_widget_rep* tm) {
   }
 
   // 4. 激活初始会话（按需创建 Panel）
+  if (benching) bench_start ("chat_init: activate session");
   if (!is_empty (initialId)) {
     activateSession (initialId);
   }
   else {
     ensureNewConversation ();
   }
+  if (benching) bench_end ("chat_init: activate session");
 
   // 5. 恢复当前模型（使用激活的会话）
   if (!is_empty (initialId)) {
@@ -179,6 +188,14 @@ ChatController::onSendRequested (const string& sessionId) {
   tree inputBody= panel->readInputMessage ();
   if (ChatConversationPanel::is_empty_document_body (inputBody)) return;
 
+  // 包含图片时提示不支持，不发送
+  if (as_bool (call ("chat-tab-tree-has-image?", inputBody))) {
+    QtFloatingToast::showToast (
+        view_, qt_translate ("Images are not supported in AI chat"), 3000,
+        QtFloatingToast::Warning);
+    return;
+  }
+
   // 首次发送时注册 session 到持久化层 + 加入 sidebar
   registerSession (sessionId);
 
@@ -200,9 +217,16 @@ ChatController::onSendRequested (const string& sessionId) {
     }
   }
 
+  // 必须在 scheme 发送之前创建消息编辑器：texmacs_input_widget 对已存在
+  // buffer 会 set_buffer_tree 整体覆盖，若放在 chat-tab-send 之后，scheme
+  // 侧记录的输出节点指针会指向被替换的旧树，导致首轮 %chat 回显漏出到
+  // session 文档末尾（devel/1230.md）
+  panel->ensureMessageWidget ();
+
   if (!as_bool (
           call ("chat-tab-send", sessionId, session->model,
-                session->thinking ? string ("enabled") : string ("disabled"))))
+                session->thinking ? string ("enabled") : string ("disabled"),
+                session->search ? string ("enabled") : string ("disabled"))))
     return;
 
   sessionManager_.setState (sessionId, ChatState::Generating);
@@ -223,6 +247,12 @@ ChatController::onCancelRequested (const string& sessionId) {
 void
 ChatController::onThinkingToggled (const string& sessionId, bool enabled) {
   sessionManager_.setThinking (sessionId, enabled);
+  updateManifest (sessionId);
+}
+
+void
+ChatController::onSearchToggled (const string& sessionId, bool enabled) {
+  sessionManager_.setSearch (sessionId, enabled);
   updateManifest (sessionId);
 }
 
@@ -516,6 +546,7 @@ ChatController::updateManifest (const string& sessionId) {
        << object (s->archived ? string ("true") : string ("false"))
        << object (string (createdAtBuf))
        << object (s->thinking ? string ("enabled") : string ("disabled"))
+       << object (s->search ? string ("enabled") : string ("disabled"))
        << object (string (updateAtBuf));
   call ("chat-persist-update-manifest", args);
 }
@@ -546,6 +577,8 @@ ChatController::connectPanelSignals (ChatConversationPanel* panel) {
            &ChatController::onSendRequested);
   connect (panel, &ChatConversationPanel::thinkingToggled, this,
            &ChatController::onThinkingToggled);
+  connect (panel, &ChatConversationPanel::searchToggled, this,
+           &ChatController::onSearchToggled);
   connect (panel, &ChatConversationPanel::closeSidebarInDockModeRequested, this,
            [this] () {
              if (!view_) return;
@@ -581,6 +614,7 @@ ChatController::ensureNewConversation () {
   sessionManager_.setPanel (sid, panel);
   sessionManager_.setModel (sid, currentModel_);
 
+  eval ("(use-modules (llm chat-style))");
   call ("chat-tab-sync-dark-style!", sid);
   call ("chat-tab-load-input-styles!", sid);
 
@@ -613,6 +647,7 @@ ChatController::getOrCreatePanel (const string& sessionId) {
 
   sessionManager_.setPanel (sessionId, panel);
 
+  eval ("(use-modules (llm chat-style) (llm chat-protocol))");
   call ("chat-tab-sync-dark-style!", sessionId);
   call ("chat-tab-init-session!", sessionId, s->model);
 
@@ -622,6 +657,11 @@ ChatController::getOrCreatePanel (const string& sessionId) {
   // 恢复推理模式按钮状态
   if (panel->thinkingButton () && s->thinking) {
     panel->thinkingButton ()->setChecked (true);
+  }
+
+  // 恢复网络搜索按钮状态
+  if (panel->searchButton () && s->search) {
+    panel->searchButton ()->setChecked (true);
   }
 
   return panel;
@@ -680,7 +720,7 @@ void
 qt_chat_tab_restore_session (string sessionId, string title, string model,
                              string archived, string createdAtStr,
                              string updatedAtStr, int defaultExpandCount,
-                             string thinking) {
+                             string thinking, string search) {
   time_t      createdAt= (time_t) std::atol (c_string (createdAtStr));
   time_t      updateAt = is_empty (updatedAtStr)
                              ? createdAt
@@ -695,6 +735,7 @@ qt_chat_tab_restore_session (string sessionId, string title, string model,
   session.updateAt          = updateAt;
   session.defaultExpandCount= (defaultExpandCount > 0) ? defaultExpandCount : 5;
   session.thinking          = (thinking == "enabled");
+  session.search            = (search == "enabled");
   session.panel             = nullptr;
   get_chat_controller ()->restoreSessionMeta (session);
 }

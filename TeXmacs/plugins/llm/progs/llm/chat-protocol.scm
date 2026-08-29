@@ -12,7 +12,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (texmacs-module (llm chat-protocol)
-  (:use (llm chat-tree-ops)
+  (:use (llm chat-style)
+    (llm chat-tree-ops)
     (utils library tree)
     (utils library cursor)
     (utils plugins plugin-eval)
@@ -21,25 +22,23 @@
     (kernel texmacs tm-plugins)
     (texmacs texmacs tm-files)
     (texmacs texmacs tm-server)
-    (data latex)
+    (latex latex-format)
   ) ;:use
 ) ;texmacs-module
 
 (import (liii njson))
 
-;;; ---------- 全局常量 ----------
+;;; ---------- Record Type ----------
 
-(define chat-tab-session-name "llm")
-
-;;; ---------- Buffer URL 推导函数 ----------
-
-(tm-define (chat-tab-session->message-buffer session-id)
-  (string->url (string-append "tmfs://chat/" session-id "/message"))
-) ;tm-define
-
-(tm-define (chat-tab-session->input-buffer session-id)
-  (string->url (string-append "tmfs://chat/" session-id "/input"))
-) ;tm-define
+(define-record-type <chat-input>
+  (make-chat-input input session-id model thinking search)
+  chat-input?
+  (input chat-input-input)
+  (session-id chat-input-session-id)
+  (model chat-input-model)
+  (thinking chat-input-thinking)
+  (search chat-input-search)
+) ;define-record-type
 
 ;;; ---------- Buffer 类型检测 ----------
 
@@ -104,42 +103,10 @@
   ) ;let
 ) ;tm-define
 
-(tm-define (chat-tab-load-input-styles! session-id)
-  (:synopsis "Load style packages for input buffer only (new conversation)")
-  (:argument session-id "Session UUID")
-  (let ((in-buf (chat-tab-session->input-buffer session-id)))
-    (with-buffer in-buf
-      (chat-tab-add-default-style-packages! chat-tab-session-name)
-    ) ;with-buffer
-  ) ;let
-) ;tm-define
-
-(tm-define (chat-tab-sync-dark-style! session-id)
-  ;; C++ 侧创建 panel 后调用，同步暗色样式包
-  (when (== (get-preference "gui theme") "liii-night")
-    (let ((msg-buf (chat-tab-session->message-buffer session-id))
-          (in-buf (chat-tab-session->input-buffer session-id))
-         ) ;
-      (with-buffer msg-buf
-        (when (not (has-style-package? "dark"))
-          (add-style-package "dark")
-        ) ;when
-      ) ;with-buffer
-      (with-buffer in-buf
-        (when (not (has-style-package? "dark"))
-          (add-style-package "dark")
-        ) ;when
-      ) ;with-buffer
-    ) ;let
-  ) ;when
-) ;tm-define
-
 ;;; ---------- 编码/解码 ----------
 
 (define (chat-tab-session-encode input session-id out opts)
-  (list (list chat-tab-session-do
-          chat-tab-session-notify
-          chat-tab-session-next
+  (list (list chat-tab-session-do chat-tab-session-notify chat-tab-session-next
           chat-tab-session-cancel
         ) ;list
     input
@@ -358,10 +325,15 @@
   ) ;cond
 ) ;define
 
-(define (chat-tab-build-context-input input session-id model thinking)
+(define (chat-tab-build-context-input ctx)
   ;; 单轮：只编码当前用户输入 + per-round 参数
   ;; 线格式：%chat <json>\n<EOF>\n
-  (let* ((content (chat-tab-tree->plain-text input))
+  (let* ((input (chat-input-input ctx))
+         (session-id (chat-input-session-id ctx))
+         (model (chat-input-model ctx))
+         (thinking (chat-input-thinking ctx))
+         (search (chat-input-search ctx))
+         (content (chat-tab-tree->plain-text input))
          (obj (string->njson "{}"))
          (params (string->njson "{}"))
          (stree-input (if (tree? input) (tree->stree input) input))
@@ -370,6 +342,7 @@
     (njson-set! obj "sessionId" session-id)
     (njson-set! params "model" model)
     (njson-set! params "thinking" thinking)
+    (njson-set! params "search" search)
     (njson-set! obj "params" params)
     (njson-set! obj "content" content)
     ;; 可选：有图片时加入 images 数组
@@ -392,37 +365,39 @@
     (let ((json-str (njson->string obj)))
       (njson-free params)
       (njson-free obj)
-      (let ((cork-json (utf8->cork json-str)))
-        (stree->tree `(document ,(string-append "%chat " cork-json)))
-      ) ;let
+      (stree->tree `(document ,(string-append "%chat " json-str)))
     ) ;let
   ) ;let*
 ) ;define
 
 ;;; ---------- Feed ----------
 
-(define (chat-tab-session-feed lan ses input session-id out opts model thinking)
+(define (chat-tab-session-feed lan ses ctx out opts)
   ;; 用单轮输入替换原始输入
-  (set! input (chat-tab-build-context-input input session-id model thinking))
-  (set! input (plugin-preprocess lan ses input opts))
-  (with-buffer (chat-tab-session->message-buffer session-id)
-    (tree-assign! out '(document (script-busy)))
-  ) ;with-buffer
-  ;; 通知 C++ 进入 Generating 状态，切换按钮为 Stop
-  (chat-tab-notify-state session-id "generating")
-  (with x
-    (chat-tab-session-encode input session-id out opts)
-    (apply plugin-feed `(,lan ,ses ,@(car x) ,(cdr x)))
-  ) ;with
+  (let ((input (chat-tab-build-context-input ctx))
+        (session-id (chat-input-session-id ctx))
+       ) ;
+    (set! input (plugin-preprocess lan ses input opts))
+    (with-buffer (chat-tab-session->message-buffer session-id)
+      (tree-assign! out '(document (script-busy)))
+    ) ;with-buffer
+    ;; 通知 C++ 进入 Generating 状态，切换按钮为 Stop
+    (chat-tab-notify-state session-id "generating")
+    (with x
+      (chat-tab-session-encode input session-id out opts)
+      (apply plugin-feed `(,lan ,ses ,@(car x) ,(cdr x)))
+    ) ;with
+  ) ;let
 ) ;define
 
 ;;; ---------- 发送 ----------
 
-(tm-define (chat-tab-session-send session-id model thinking)
+(tm-define (chat-tab-session-send session-id model thinking search)
   (:synopsis "Send user message through chat tab session")
   (:argument session-id "Session UUID")
   (:argument model "Model name")
   (:argument thinking "Thinking mode: enabled or disabled")
+  (:argument search "Search mode: enabled or disabled")
   (let* ((in-buf (chat-tab-session->input-buffer session-id))
          (body (buffer-get-body in-buf))
         ) ;
@@ -433,6 +408,16 @@
             ) ;
         ;; 延迟初始化：首次发送时设置 session body 并加载样式包
         (let ((plugin-ses (string-append "chat-tab:" session-id)))
+          ;; 消息编辑器懒创建（#4258）后，新会话首次发送时 message buffer
+          ;; 既不存在也无 view：with-buffer 经 buffer-focus 切视图，任一
+          ;; 不满足都会短路返回 #f，初始化代码因此永不执行。
+          ;; 先 buffer-set-body 直接建 buffer（不得用 view-passive 单独建，
+          ;; 其内部 buffer_load 对 tmfs://chat/* 会产出 Invalid tmfs
+          ;; document 错误文档），再 view-passive 补挂 passive view。
+          (when (not (buffer-exists? msg-buf))
+            (buffer-set-body msg-buf '(document ""))
+          ) ;when
+          (view-passive msg-buf)
           (with-buffer msg-buf
             (let ((msg-body (buffer-get-body msg-buf)))
               (when (chat-tab-buffer-empty? msg-body)
@@ -456,15 +441,9 @@
                     #t
                   ) ;begin
                   (begin
-                    (chat-tab-session-feed chat-tab-session-name
-                      plugin-ses
-                      input
-                      session-id
-                      out
-                      '()
-                      model
-                      thinking
-                    ) ;chat-tab-session-feed
+                    (let ((ctx (make-chat-input input session-id model thinking search)))
+                      (chat-tab-session-feed chat-tab-session-name plugin-ses ctx out '())
+                    ) ;let
                     #t
                   ) ;begin
                 ) ;if
@@ -503,12 +482,13 @@
   ) ;if
 ) ;tm-define
 
-(tm-define (chat-tab-send session-id model thinking)
+(tm-define (chat-tab-send session-id model thinking search)
   (:synopsis "Adapter send entry for a chat tab")
   (:argument session-id "Session UUID")
   (:argument model "Model name")
   (:argument thinking "Thinking mode")
-  (chat-tab-session-send session-id model thinking)
+  (:argument search "Search mode")
+  (chat-tab-session-send session-id model thinking search)
 ) ;tm-define
 
 (tm-define (chat-tab-cancel session-id)

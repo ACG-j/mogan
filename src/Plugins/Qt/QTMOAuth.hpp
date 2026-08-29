@@ -18,6 +18,7 @@
 #include <QtNetworkAuth/qoauthhttpserverreplyhandler.h>
 
 #include <QtCore/qabstractitemmodel.h>
+#include <QtCore/qbytearray.h>
 #include <QtCore/qjsonobject.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qtimer.h>
@@ -41,11 +42,14 @@ private slots:
   void checkTokenStatus ();
 
 private:
-  void    loadExistingToken ();
-  QString generateCodeVerifier ();
-  QString generateCodeChallenge (const QString& verifier);
-  QUrl    getAuthorizationUrl ();
-  QUrl    getAccessTokenUrl ();
+  void       loadExistingToken ();
+  QString    generateCodeVerifier ();
+  QString    generateCodeChallenge (const QString& verifier);
+  QUrl       getAuthorizationUrl ();
+  QUrl       getAccessTokenUrl ();
+  QString    getGrowthUrl ();
+  QByteArray getPreviewCookieHeader ();
+  void       refreshCallbackHtml ();
 
   bool m_isLoggedIn= false;
 

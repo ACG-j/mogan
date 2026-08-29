@@ -24,6 +24,7 @@
 #include "translator.hpp"
 #include "unicode.hpp"
 
+#include <lolly/data/herk.hpp>
 #include <lolly/data/numeral.hpp>
 #include <lolly/data/unicode.hpp>
 
@@ -861,9 +862,21 @@ smart_font_rep::advance (string s, int& pos, string& r, int& nr) {
     debug_fonts << "Advance for font of [" << s << "] " << this->res_name
                 << " math_kind: " << math_kind << LF;
     debug_fonts << "Physical font of [" << r << "]"
-                << "[" << herk_to_utf8 (r) << "][" << cork_to_utf8 (r) << "]"
+                << "[" << lolly::data::herk_to_utf8 (r) << "]["
+                << cork_to_utf8 (r) << "]"
                 << " is " << fn[nr]->res_name << LF;
   }
+}
+
+font
+smart_font_rep::get_subfont (string s) {
+  int    pos= 0, nr= -1;
+  string r;
+  advance (s, pos, r, nr);
+  if (nr < 0 || nr >= N (fn)) return font ();
+  maybe_initialize_font (nr);
+  if (is_nil (fn[nr])) return font ();
+  return fn[nr]->get_subfont (r);
 }
 
 bool
@@ -1180,6 +1193,33 @@ smart_font_rep::resolve (string c) {
         }
       }
     }
+
+    // Fallback emoji (U+2600-U+27BF) to Noto Sans Symbols, Noto Sans Symbols2,
+    // then DejaVu Sans
+    font noto_fn=
+        closest_font ("Noto Sans Symbols", "rm", "medium", "right", sz, dpi, 1);
+    if (!is_nil (noto_fn) && noto_fn->supports (c)) {
+      tree key= tuple ("emoji-font", "Noto Sans Symbols");
+      int  nr = sm->add_font (key, REWRITE_NONE);
+      maybe_initialize_font (nr);
+      return sm->add_char (key, c);
+    }
+    font noto2_fn= closest_font ("Noto Sans Symbols2", "rm", "medium", "right",
+                                 sz, dpi, 1);
+    if (!is_nil (noto2_fn) && noto2_fn->supports (c)) {
+      tree key= tuple ("emoji-font", "Noto Sans Symbols2");
+      int  nr = sm->add_font (key, REWRITE_NONE);
+      maybe_initialize_font (nr);
+      return sm->add_char (key, c);
+    }
+    font dejavu_fn=
+        closest_font ("DejaVu Sans", "rm", "medium", "right", sz, dpi, 1);
+    if (!is_nil (dejavu_fn) && dejavu_fn->supports (c)) {
+      tree key= tuple ("emoji-font", "DejaVu Sans");
+      int  nr = sm->add_font (key, REWRITE_NONE);
+      maybe_initialize_font (nr);
+      return sm->add_char (key, c);
+    }
   }
 
   // Fallback Cyrillic characters to default Chinese font
@@ -1190,6 +1230,26 @@ smart_font_rep::resolve (string c) {
         int nr= resolve (c, "cyrillic=" * chinese_name, attempt);
         if (nr >= 0) return nr;
       }
+    }
+  }
+
+  // Fallback Geometric Shapes (U+2500-U+25FF) to Stix Two Math
+  int geom_code= -1;
+  {
+    string uc  = strict_cork_to_utf8 (c);
+    int    pos = 0;
+    int    code= -1;
+    if (N (uc) > 0) code= decode_from_utf8 (uc, pos);
+    if (pos == N (uc) && code >= 0) geom_code= code;
+  }
+  if (geom_code >= 0x2500 && geom_code <= 0x25FF) {
+    font cfn=
+        closest_font ("Stix Two Math", "rm", "medium", "right", sz, dpi, 1);
+    if (!is_nil (cfn) && cfn->supports (c)) {
+      tree key= tuple ("symbol-font", "Stix Two Math");
+      int  nr = sm->add_font (key, REWRITE_NONE);
+      maybe_initialize_font (nr);
+      return sm->add_char (key, c);
     }
   }
 
@@ -1319,6 +1379,9 @@ smart_font_rep::initialize_font (int nr) {
   else if (a[0] == "subfont")
     fn[nr]= smart_font_bis (a[1], variant, series, shape, sz, hdpi, dpi);
   else if (a[0] == "emoji-font")
+    fn[nr]= adjust_subfont (
+        closest_font (a[1], "rm", "medium", "right", sz, dpi, 1));
+  else if (a[0] == "symbol-font")
     fn[nr]= adjust_subfont (
         closest_font (a[1], "rm", "medium", "right", sz, dpi, 1));
   else if (a[0] == "special")

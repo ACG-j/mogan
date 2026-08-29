@@ -143,31 +143,24 @@
        (with cprops
          ,#f
          (set! cprops
-           (map (lambda (x)
-                  (eval (#_list-values
-                         'lambda
-                         ()
-                         (#_list-values 'set! (car x) (cadr x)))))
+           (map (lambda (x) (eval `(lambda ,() (set! ,(car x) ,(cadr x)))))
              (quote ,props)))
-         (set! ,name
-           (state-create (append (quote (,slots ,props)) (#_list-values cprops))))))
+         (set! ,name (state-create (append (quote (,slots ,props)) `(,cprops))))))
   ) ;let*
 ) ;define-public-macro
 
 (define-public-macro (with-state sr . body)
-  `(begin (state-load ,sr) (with res (begin unquote body) (state-save ,sr) res))
+  `(begin (state-load ,sr) (with res (begin . ,body) (state-save ,sr) res))
 ) ;define-public-macro
 
 (define-public-macro (with-state-by-name name . body)
-  `(with sr ,name (with-state sr unquote body))
+  `(with sr ,name (with-state sr . ,body))
 ) ;define-public-macro
 
 (define-public-macro (with-state-slots sr . body)
-  `(begin
-     (state-load ,sr ,#f)
-     (with res (begin unquote body) (state-save ,sr) res))
+  `(begin (state-load ,sr ,#f) (with res (begin . ,body) (state-save ,sr) res))
 ) ;define-public-macro
 
 (define-public-macro (with-state-slots-by-name name . body)
-  `(with sr ,name (with-state-slots sr unquote body))
+  `(with sr ,name (with-state-slots sr . ,body))
 ) ;define-public-macro

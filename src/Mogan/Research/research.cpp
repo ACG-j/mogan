@@ -11,10 +11,10 @@
 
 #include "tm_configure.hpp"
 #include "url.hpp"
-#include <fcntl.h>
 #ifndef OS_WIN
 #include <unistd.h>
 #endif
+#include "locale.hpp"
 #include <locale.h> // for setlocale
 #include <lolly/system/args.hpp>
 #include <lolly/system/timer.hpp>
@@ -34,11 +34,14 @@
 #include "server.hpp"
 #include "sys_utils.hpp"
 #include "tm_file.hpp"
-#include "tm_locale.hpp"
 #include "tm_ostream.hpp"
 #include "tm_timer.hpp"
 #include "tm_url.hpp"
 #include "tm_window.hpp"
+
+#if defined(OS_WIN)
+#include "Velopack.hpp"
+#endif
 
 #ifdef AQUATEXMACS
 void mac_fix_paths ();
@@ -141,7 +144,8 @@ immediate_options (int argc, char** argv) {
   }
 
   url u= url_system (string ("$TEXMACS_HOME_PATH/system/") *
-                     get_date ("english", "%Y%m%d%H") * string (".log"));
+                     lolly::locale::get_date ("english", "%Y%m%d%H") *
+                     string (".log"));
   if (enale_logging) {
     cout << "Logging into >> " << u << LF;
     tm_ostream logf (c_string (concretize (u)));
@@ -159,6 +163,12 @@ immediate_options (int argc, char** argv) {
 
 int
 main (int argc, char** argv) {
+
+  // Velopack 启动钩子：处理待安装的更新（无安装时为空操作）。
+  // 必须早于任何系统初始化与参数解析，且仅限 Windows。
+#if defined(OS_WIN)
+  Velopack::VelopackApp::Build ().Run ();
+#endif
 
   // 1.系统初始化
   lolly::init_tbox ();                // 初始化tbox库
@@ -235,6 +245,7 @@ main (int argc, char** argv) {
       docsDir= QStandardPaths::writableLocation (QStandardPaths::HomeLocation);
     set_env ("TEXMACS_DOCUMENTS_PATH", from_qstring_utf8 (docsDir));
   }
+#endif
 
   // before startup login dialog
   init_texmacs_path (argc, argv);
@@ -242,15 +253,15 @@ main (int argc, char** argv) {
   load_settings_and_check_version ();
   init_plugins ();
 
+#ifdef QTTEXMACS
   // Show startup login dialog
   if (!show_startup_login_dialog ()) {
     return 0;
   }
+#endif
 
   // 如果show_startup_login_dialog没执行，继续初始化TeXmacs
   init_texmacs ();
-
-#endif
 
 // 4.GUI配置和Scheme启动
 #ifdef QTTEXMACS

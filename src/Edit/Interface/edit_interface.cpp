@@ -15,6 +15,7 @@
 #include "data_cache.hpp"
 #include "file.hpp"
 #include "gui.hpp" // for gui_interrupted
+#include "hashset.hpp"
 #include "message.hpp"
 #include "new_view.hpp"
 #include "observers.hpp"
@@ -63,7 +64,8 @@ edit_interface_rep::edit_interface_rep ()
       anim_next (1.0e12), full_screen (false), got_focus (false), sh_s (""),
       sh_mark (0), pre_edit_skip (false), pre_edit_s (""), pre_edit_mark (0),
       popup_win (), message_l (""), message_r (""), last_l (""), last_r (""),
-      zoomf (get_zoom (this, buf)), magf (zoomf / std_shrinkf),
+      menu_focus_path (), menu_need_save (false), zoomf (get_zoom (this, buf)),
+      magf (zoomf / std_shrinkf),
       pixel ((SI) tm_round ((std_shrinkf * PIXEL) / zoomf)),
       zpixel (max ((SI) tm_round (std_shrinkf * PIXEL), pixel)), copy_always (),
       last_x (0), last_y (0), last_t (0), tremble_count (0),
@@ -114,23 +116,8 @@ edit_interface_rep::resume () {
   // cout << "Resume " << buf->buf->name << LF;
   bench_start ("resume");
   got_focus= true;
-  SERVER (menu_main ("(horizontal (link texmacs-menu))"));
-  SERVER (menu_icons (0, "(horizontal (link texmacs-main-icons))"));
-  SERVER (menu_icons (1, "(horizontal (link texmacs-mode-icons))"));
-  SERVER (menu_icons (2, "(horizontal (link texmacs-focus-icons))"));
-  SERVER (menu_icons (3, "(horizontal (link texmacs-extra-icons))"));
-  SERVER (menu_icons (4, "(horizontal (link texmacs-tab-pages))"));
-  SERVER (notification_bar ("(horizontal (link texmacs-notification-bar))"));
-  array<url> a= buffer_to_windows (buf->buf->name);
-  if (N (a) > 0) {
-    string win = "(string->url \"" * as_string (a[0]) * "\")";
-    string ldyn= "(dynamic (texmacs-left-tools " * win * "))";
-    string rdyn= "(dynamic (texmacs-side-tools " * win * "))";
-    string bdyn= "(dynamic (texmacs-bottom-tools " * win * "))";
-    SERVER (side_tools (1, "(vertical " * ldyn * ")"));
-    SERVER (side_tools (0, "(vertical " * rdyn * ")"));
-    SERVER (bottom_tools (0, "(vertical " * bdyn * ")"));
-  }
+  // 切 tab / 新建 / 关闭标签均经 resume 触发全量重建
+  notify_change (THE_MENUS);
   cur_sb    = 2;
   env_change= env_change & (~THE_FREEZE);
   notify_change (THE_FOCUS + THE_EXTENTS);
@@ -240,6 +227,12 @@ edit_interface_rep::update_visible () {
   vy1= (SI) (vy1 / magf);
   vx2= (SI) (vx2 / magf);
   vy2= (SI) (vy2 / magf);
+}
+
+void
+edit_interface_rep::invalidate_visible () {
+  update_visible ();
+  invalidate (vx1, vy1, vx2, vy2);
 }
 
 SI
@@ -509,6 +502,8 @@ edit_interface_rep::selection_visible () {
   update_visible ();
   if ((vx2 - vx1 <= 80 * pixel) || (vy2 - vy1 <= 80 * pixel)) return;
 
+#ifdef QTTEXMACS
+  // ImGui 将独立实现 drag scrolling 逻辑
   SI extra= (cur_sb == 1 ? 20 * pixel : 0);
   /*
   bool scroll_x= (end_x < vx1 + extra) || (end_x >= vx2 - extra);
@@ -534,6 +529,7 @@ edit_interface_rep::selection_visible () {
     end_x+= vx1 - old_vx1;
     end_y+= vy1 - old_vy1;
   }
+#endif
 }
 
 /******************************************************************************
@@ -544,6 +540,7 @@ static bool
 is_graphical (tree t) {
   return is_func (t, POINT) || is_func (t, LINE) || is_func (t, CLINE) ||
          is_func (t, ARC) || is_func (t, CARC) || is_func (t, ELLIPSE) ||
+         is_func (t, HYPERBOLA) || is_func (t, PARABOLA) ||
          is_func (t, SPLINE) || is_func (t, CSPLINE) || is_func (t, BEZIER) ||
          is_func (t, CBEZIER) || is_func (t, SMOOTH) || is_func (t, CSMOOTH) ||
          is_func (t, PENSCRIPT) || is_func (t, CALLIGRAPHY);
@@ -600,6 +597,35 @@ correct_adjacent_horizontal (rectangles& rs1, rectangles& rs2) {
   SI mid       = (right1 + left2) >> 1;
   rs1->item->x2= mid;
   rs2->item->x1= mid;
+}
+
+// 保留蓝色焦点填充的 inline 标签白名单：其余结构（段落、列表、表格、
+// 绘图区等块级标签）一律只画边框，避免大面积蓝色填充遮挡内容
+// （Issue #2091）。DRD 目前没有 inline/block 属性可查询，故显式列举。
+static bool
+is_inline_focus_tag (tree st) {
+  if (!is_compound (st)) return false;
+  static hashset<string> tags;
+  if (N (tags) == 0) {
+    tags << string ("strong") << string ("em") << string ("dfn")
+         << string ("samp") << string ("name") << string ("person")
+         << string ("abbr") << string ("acronym") << string ("kbd")
+         << string ("var") << string ("tt") << string ("verbatim")
+         << string ("cite*") << string ("math") << string ("rsub")
+         << string ("rsup") << string ("hlink") << string ("slink")
+         << string ("action") << string ("item") << string ("cell")
+         << string ("around") << string ("around*") << string ("sqrt")
+         << string ("frac") << string ("frac*") << string ("dfrac")
+         << string ("tfrac") << string ("cfrac") << string ("above")
+         << string ("lsub") << string ("lsup") << string ("strike-through")
+         << string ("underline") << string ("bold") << string ("below")
+         << string ("really-tiny") << string ("tiny") << string ("very-small")
+         << string ("normal-size") << string ("large") << string ("very-large")
+         << string ("huge") << string ("really-huge") << string ("overline")
+         << string ("small") << string ("long-arrow") << string ("wide")
+         << string ("paragraph") << string ("subparagraph");
+  }
+  return tags->contains (as_string (L (st)));
 }
 
 void
@@ -770,7 +796,11 @@ edit_interface_rep::compute_env_rects (path p, rectangles& rs, bool recurse) {
       if (N (focus_get ()) >= N (p))
         if (!recurse || get_preference ("show full context") == "on") {
           if (recurse) rs << outlines (sel->rs, pixel);
-          else rs << thicken (sel->rs, 0, 2 * pixel);
+          // 仅 inline 标签白名单保留半透明蓝色填充，其余结构（段落、
+          // 列表、表格、绘图区等）一律只画边框（Issue #2091）。
+          else if (is_inline_focus_tag (st))
+            rs << thicken (sel->rs, 0, 2 * pixel);
+          else rs << outlines (sel->rs, pixel);
         }
     }
     set_access_mode (old_mode);
@@ -791,6 +821,7 @@ edit_interface_rep::notify_change (int change) {
   // 选区变化时，使文本工具栏缓存失效
   // 输入字符时选区变化会触发 THE_SELECTION，进而使工具栏缓存失效并隐藏
   if ((change & THE_SELECTION) != 0) invalidate_text_popup_cache ();
+  if ((change & (THE_SELECTION | THE_CURSOR)) != 0) collab_cursor_moved_hook ();
 }
 
 bool
@@ -813,57 +844,164 @@ edit_interface_rep::change_time () {
 
 void
 edit_interface_rep::update_menus () {
-  bool is_startup= is_startup_tab_buffer (buf->buf->name);
-  bool is_chat   = is_chat_tab_buffer (buf->buf->name);
-  bench_start ("update_menus");
+  update_menus (MENU_ALL);
+}
+
+/**
+ * @brief 判断指定 buffer 在 update_menus 中是否应重建某些段。
+ * @param mask 待检测的段（MENU_MAIN / ICONS_* / TAB_PAGES / NOTIFICATION /
+ * SIDE_TOOLS，可多位或）。
+ * @param name buffer URL。
+ * @return 若 mask 中所有位对该 buffer 都允许重建则返回 true；空掩码视为不
+ * 重建，故调用处直接传 \c{mask & BIT} 即可同时完成「已请求」与「按规则
+ * 允许」两种判断。
+ * @par 规则（由 should_update_menu_test 钉死）
+ * - 普通 buffer：全部重建；
+ * - startup tab：仅重建 tab 栏（TAB_PAGES）；
+ * - chat 标签页：仅重建 tab 栏（TAB_PAGES）——关闭当前 tab 后视图中转到
+ *   chat 时，tab 栏必须随这次 update_menus 重建才能移除已关 tab；解耦后
+ *   tab_pages() 有签名判等，tab 集不变时仅一次签名比较，代价远低于旧
+ *   menu-expand 全量重建（f1a09d932 全部跳过的初衷）；
+ * - chat 只读消息区：全部跳过；
+ * - chat 输入框：仅重建模式工具栏（ICONS_MODE）——dock 侧边栏模式下焦点
+ *   切到输入框时模式工具栏可见，仍需随其重建。
+ * - 搜索/替换辅助缓冲区（tmfs://aux/search、tmfs://aux/replace）：全部
+ *   跳过——它们嵌在搜索面板 widget 里，各菜单段都与它无关。
+ * - 页眉页脚辅助缓冲区（tmfs://aux/page-odd/even-header/footer）：全部
+ *   跳过——它们嵌在页眉页脚设置 widget 里，各菜单段都与它无关。
+ * - 评论编辑辅助缓冲区（tmfs://aux/edit-comment）：全部跳过——它嵌在
+ *   comment 插件的辅助 widget 里，各菜单段都与它无关。
+ */
+bool
+should_update_menu (int mask, url name) {
+  // 未请求的段直接判不重建，避免无谓的 buffer 类别判定（字符串比较）
+  if (mask == 0) return false;
+  int allow= MENU_ALL;
+  if (is_startup_tab_buffer (name)) allow= TAB_PAGES;
+  else if (is_chat_tab_buffer (name)) allow= TAB_PAGES;
+  else if (is_chat_message_buffer (name)) allow= 0;
+  else if (is_chat_input_buffer (name)) allow= ICONS_MODE;
+  else if (is_aux_search_buffer (name) || is_aux_replace_buffer (name) ||
+           is_aux_page_buffer (name) || is_aux_comment_buffer (name))
+    allow= 0;
+  return (mask & allow) == mask;
+}
+
+void
+edit_interface_rep::update_menus (int mask) {
+  url    name      = buf->buf->name;
+  string bench_task= "update_menus: " * as_string (name);
+  bench_start (bench_task);
+#ifdef LIII_DEBUG
+  cout << "[update_menus] buffer=" << as_string (name) << " mask=" << mask
+       << LF;
+#endif
+
+#ifdef LIII_DEBUG
+  cout << "update_menus [";
+  if (mask & MENU_MAIN) cout << " main";
+  if (mask & ICONS_MAIN) cout << " icons0-main";
+  if (mask & ICONS_MODE) cout << " icons1-mode";
+  if (mask & ICONS_FOCUS) cout << " icons2-focus";
+  if (mask & ICONS_EXTRA) cout << " icons3-extra";
+  if (mask & TAB_PAGES) cout << " icons4-tabs";
+  if (mask & NOTIFICATION) cout << " notification";
+  if (mask & SIDE_TOOLS) cout << " side-tools";
+  cout << " ]\n";
+#endif
 
   if (get_server ()->in_full_screen_mode ()) {
-    bench_end ("update_menus");
+    bench_end (bench_task);
     return;
   }
 
-  if (!is_startup && !is_chat)
+  if (should_update_menu (mask & MENU_MAIN, name)) {
+    bench_start ("update_menus: menu_main");
     SERVER (menu_main ("(horizontal (link texmacs-menu))"));
-  if (!is_startup && !is_chat)
+    bench_end ("update_menus: menu_main");
+  }
+#ifndef OS_WASM
+  // WASM/React shell 只渲染主菜单（SLOT_MAIN_MENU → im_react_push_menu）；
+  // icons/tabs 的 widget 建了也无前端消费，每次 update_menus 都为它们跑
+  // scheme 求值是纯浪费（这是 WASM 下 update_menus 慢的主因）。native 保留。
+  if (should_update_menu (mask & ICONS_MAIN, name)) {
+    bench_start ("update_menus: icons0-main");
     SERVER (menu_icons (0, "(horizontal (link texmacs-main-icons))"));
-  if (!is_startup)
+    bench_end ("update_menus: icons0-main");
+  }
+  if (should_update_menu (mask & ICONS_MODE, name)) {
+    bench_start ("update_menus: icons1-mode");
     SERVER (menu_icons (1, "(horizontal (link texmacs-mode-icons))"));
-  if (!is_startup && !is_chat)
+    bench_end ("update_menus: icons1-mode");
+  }
+  if (should_update_menu (mask & ICONS_FOCUS, name)) {
+    bench_start ("update_menus: icons2-focus");
     SERVER (menu_icons (2, "(horizontal (link texmacs-focus-icons))"));
-  if (!is_startup && !is_chat)
+    bench_end ("update_menus: icons2-focus");
+  }
+  if (should_update_menu (mask & ICONS_EXTRA, name)) {
+    bench_start ("update_menus: icons3-extra");
     SERVER (menu_icons (3, "(horizontal (link texmacs-extra-icons))"));
-  SERVER (menu_icons (4, "(horizontal (link texmacs-tab-pages))"));
-  if (!is_startup && !is_chat)
+    bench_end ("update_menus: icons3-extra");
+  }
+  if (should_update_menu (mask & TAB_PAGES, name)) {
+    bench_start ("update_menus: icons4-tabs");
+    SERVER (tab_pages ());
+    bench_end ("update_menus: icons4-tabs");
+  }
+#endif
+  if (should_update_menu (mask & NOTIFICATION, name)) {
+    bench_start ("update_menus: notification");
     SERVER (notification_bar ("(horizontal (link texmacs-notification-bar))"));
-  if (is_startup || is_chat) {
+    bench_end ("update_menus: notification");
+  }
+#ifndef OS_WASM
+  // 同 icons：WASM/React 无 side-tools 前端，跳过其 scheme 求值。
+  if (should_update_menu (mask & SIDE_TOOLS, name)) {
+    bench_start ("update_menus: side-tools");
+    array<url> a= buffer_to_windows (name);
+    if (N (a) > 0) {
+      string win = "(string->url \"" * as_string (a[0]) * "\")";
+      string ldyn= "(dynamic (texmacs-left-tools " * win * "))";
+      string rdyn= "(dynamic (texmacs-side-tools " * win * "))";
+      string bdyn= "(dynamic (texmacs-bottom-tools " * win * "))";
+      SERVER (side_tools (1, "(vertical " * ldyn * ")"));
+      SERVER (side_tools (0, "(vertical " * rdyn * ")"));
+      SERVER (bottom_tools (0, "(vertical " * bdyn * ")"));
+    }
+    bench_end ("update_menus: side-tools");
+  }
+#endif
+  // MENU_MAIN 不重建的 buffer（startup/chat 标签页/消息区/输入框/搜索替换
+  // 辅助/页眉页脚辅助）
+  // 同样不需要 footer 与尾部簿记
+  if (!should_update_menu (MENU_MAIN, name)) {
     last_update= last_change;
-    bench_end ("update_menus");
+    bench_end (bench_task);
     return;
   }
-  array<url> a= buffer_to_windows (buf->buf->name);
-  if (N (a) > 0) {
-    string win = "(string->url \"" * as_string (a[0]) * "\")";
-    string ldyn= "(dynamic (texmacs-left-tools " * win * "))";
-    string rdyn= "(dynamic (texmacs-side-tools " * win * "))";
-    string bdyn= "(dynamic (texmacs-bottom-tools " * win * "))";
-    SERVER (side_tools (1, "(vertical " * ldyn * ")"));
-    SERVER (side_tools (0, "(vertical " * rdyn * ")"));
-    SERVER (bottom_tools (0, "(vertical " * bdyn * ")"));
-  }
+  bench_start ("update_menus: footer+tail");
   set_footer ();
-  if (has_current_window ()) {
-    array<url> ws= buffer_to_windows (
-        window_to_buffer (abstract_window (concrete_window ())));
-    int  n = N (ws);
-    bool ns= need_save ();
-    for (int i= 0; i < n; i++)
-      concrete_window (ws[i])->set_modified (ns);
+  if (mask == MENU_ALL) {
+    if (has_current_window ()) {
+      array<url> ws= buffer_to_windows (
+          window_to_buffer (abstract_window (concrete_window ())));
+      int  n = N (ws);
+      bool ns= need_save ();
+      for (int i= 0; i < n; i++)
+        concrete_window (ws[i])->set_modified (ns);
+    }
+    if (!gui_interrupted ()) drd_update ();
+    cache_memorize ();
+    last_update= last_change;
+    save_user_preferences ();
   }
-  if (!gui_interrupted ()) drd_update ();
-  cache_memorize ();
-  last_update= last_change;
-  save_user_preferences ();
-  bench_end ("update_menus");
+  // 缓存记录（该类别上次重建时的状态）
+  if ((mask & (ICONS_MODE | ICONS_FOCUS)) == (ICONS_MODE | ICONS_FOCUS))
+    menu_focus_path= focus_get ();
+  if (mask & TAB_PAGES) menu_need_save= need_save ();
+  bench_end ("update_menus: footer+tail");
+  bench_end (bench_task);
 }
 
 int
@@ -912,9 +1050,7 @@ edit_interface_rep::apply_changes () {
   }
 
   if (env_change == 0) {
-    if (last_change - last_update > 0 &&
-        idle_time (INTERRUPTED_EVENT) >= 1000 / 6)
-      update_menus ();
+    // 原 idle 轮询（166ms）全量 update_menus 已删除
     if (new_visible == last_visible) return;
   }
 
@@ -984,6 +1120,11 @@ edit_interface_rep::apply_changes () {
       }
     }
   }
+
+  // 启动页 UI 由 Qt widget 承担,排版结果不显示:屏蔽除菜单外的全部
+  // 改动位,跳过排版/光标/选区等编辑器路径(eb 保持 nil,相关代码均不可
+  // 触达),仅保留 tab 页栏重建
+  if (is_startup_tab_buffer (buf->buf->name)) env_change&= THE_MENUS;
 
   // cout << "Handling selection\n";
   if (env_change & (THE_TREE + THE_ENVIRONMENT + THE_SELECTION)) {
@@ -1104,6 +1245,9 @@ edit_interface_rep::apply_changes () {
       ;
     else pp= path_up (pp);
     if (full_context || table_cells) compute_env_rects (pp, env_rects, true);
+    // 光标处于绘图区时仍计算 foc_rects；焦点填充样式在 compute_env_rects
+    // 内部分流：仅 inline 标签白名单用背景填充（thicken），其余结构
+    // （含绘图区）一律改用边框（outlines），避免大面积遮挡内容。
     if (show_focus && (!semantic_flag || !semantic_only))
       compute_env_rects (pp, foc_rects, false);
     if (env_rects != old_env_rects) {
@@ -1151,10 +1295,7 @@ edit_interface_rep::apply_changes () {
       table_selection= selection_active_table ();
       selection sel;
       selection_get (sel);
-      rectangles rs= thicken (sel->rs, pixel, 3 * pixel);
-#ifndef QTTEXMACS
-      rs= simplify (::correct (rs - thicken (rs, -pixel, -pixel)));
-#endif
+      rectangles rs  = thicken (sel->rs, pixel, 3 * pixel);
       selection_rects= rs;
       invalidate (selection_rects);
     }
@@ -1177,9 +1318,6 @@ edit_interface_rep::apply_changes () {
         range_set  sub_sel= simple_range (alt_sel[i], alt_sel[i + 1]);
         selection  sel    = compute_selection (sub_sel);
         rectangles rs     = thicken (sel->rs, pixel, 3 * pixel);
-#ifndef QTTEXMACS
-        rs= simplify (::correct (rs - thicken (rs, -pixel, -pixel)));
-#endif
         if (N (rs) != 0) alt_selection_rects << rs;
       }
       rectangles visible (new_visible);
@@ -1234,7 +1372,27 @@ edit_interface_rep::apply_changes () {
   if (env_change & THE_ENVIRONMENT) send_invalidate_all (this);
 
   // cout << "Handling menus\n";
-  if (env_change & THE_MENUS) update_menus ();
+  if (env_change & THE_MENUS) {
+    update_menus (MENU_ALL);
+  }
+  else if (env_change & THE_CURSOR) {
+    // 光标移动仅当焦点树身份变化时，轻量刷新 mode/focus 栏；
+    // 手写模式拖拽过程中工具栏内容不变，跳过重建
+    bool handwriting=
+        inside_active_graphics () && as_bool (call ("graphics-handwriting?"));
+    path fp= focus_get ();
+    if (!handwriting && fp != menu_focus_path) {
+      menu_focus_path= fp;
+      update_menus (ICONS_MODE | ICONS_FOCUS);
+    }
+  }
+
+  // 编辑使修改标记翻转为脏时，刷新 tab 栏与侧栏文档列表
+  bool menu_ns= need_save ();
+  if (menu_ns != menu_need_save) {
+    menu_need_save= menu_ns;
+    update_menus (TAB_PAGES | SIDE_TOOLS);
+  }
 
   // cout << "Handling tooltip\n";
   if ((env_change & (THE_ENVIRONMENT + THE_EXTENTS + THE_FOCUS)) ||
@@ -1306,6 +1464,8 @@ void
 edit_interface_rep::after_menu_action () {
   notify_change (THE_DECORATIONS);
   end_editing ();
+  // 按钮 action 已执行完毕，apply_changes 排版后全量重建
+  notify_change (THE_MENUS);
   windows_delayed_refresh (1);
 }
 

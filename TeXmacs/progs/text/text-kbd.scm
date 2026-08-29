@@ -15,6 +15,7 @@
   (:use (generic generic-kbd)
         (utils edit auto-close)
         (text text-edit)))
+(debug-message "keyboard" "(text text-kbd): registering kbd-map ...\n")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Special symbols in text mode
@@ -59,21 +60,6 @@
   ("_ _ var var" (make 'overline))
   ("/ /" "//")
   ("/ / var" (make 'deleted))
-
-  ;; Markdown Style Shortcuts
-  ("# # var" (make 'section))
-  ("# # # var" (make 'subsection))
-  ("# # # # var" (make 'subsubsection))
-  ("` ` ` var" (make 'verbatim-code))
-  ("* * var" (make-with "font-series" "bold"))
-  ("* var" (make-with "font-shape" "italic"))
-  ("- space" (make-tmlist-if-line-start 'itemize "- "))
-  ("+ space" (make-tmlist-if-line-start 'itemize "+ "))
-  ("+ var" (make-tmlist 'itemize))
-  ("1 . space" (make-tmlist-if-line-start 'enumerate "1. "))
-  ("1 . var" (make-tmlist 'enumerate))
-  ("[ ] var" (make 'hlink))
-  ("[ ] var var" (make 'slink))
 
   ("space var" (make 'nbsp))
   ("space var var" (make-space "1em"))
@@ -339,21 +325,6 @@
 ;  ("ˇ" "∏"))
 
 (kbd-map
-  (:mode in-esperanto?)
-  ("c var" "<#109>")
-  ("g var" "<#11D>")
-  ("h var" "<#125>")
-  ("j var" "<#135>")
-  ("s var" "<#15D>")
-  ("u var" "<#16D>")
-  ("C var" "<#108>")
-  ("G var" "<#11C>")
-  ("H var" "<#124>")
-  ("J var" "<#134>")
-  ("S var" "<#15C>")
-  ("U var" "<#16C>"))
-
-(kbd-map
   (:mode in-hungarian?)
   ("text:symbol O" "é")
   ("text:symbol U" "ñ")
@@ -361,46 +332,6 @@
   ("text:symbol u" "∂")
   ("text:symbol O var" "ÿ")
   ("text:symbol o var" "¯"))
-
-(kbd-map
-  (:mode in-spanish?)
-  ("°" "Ω")
-  ("ø" "æ")
-  ("! var" "Ω")
-  ("? var" "æ")
-  ("! `" "Ω")
-  ("? `" "æ")
-  ("! accent:grave" "Ω")
-  ("? accent:grave" "æ"))
-
-(kbd-map
-  (:mode in-polish?)
-  ("text:symbol a" "°")
-  ("text:symbol A" "Å")
-  ("text:symbol c" "¢")
-  ("text:symbol C" "Ç")
-  ("text:symbol e" "¶")
-  ("text:symbol E" "Ü")
-  ("text:symbol l" "™")
-  ("text:symbol L" "ä")
-  ("text:symbol n" "´")
-  ("text:symbol N" "ã")
-  ("text:symbol o" "Û")
-  ("text:symbol O" "”")
-  ("text:symbol s" "±")
-  ("text:symbol S" "ë")
-  ("text:symbol x" "π")
-  ("text:symbol X" "ô")
-  ("text:symbol z" "ª")
-  ("text:symbol Z" "õ")
-  ("text:symbol a var" "Ê")
-  ("text:symbol A var" "∆")
-  ("text:symbol o var" "¯")
-  ("text:symbol O var" "ÿ")
-  ("text:symbol s var" "ˇ")
-  ("text:symbol S var" "ﬂ")
-  ("text:symbol z var" "π")
-  ("text:symbol Z var" "ô"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Overwrite shortcuts which are inadequate in certain contexts
@@ -487,10 +418,10 @@
   ("text p" (make 'samp))
   ("text s" (make 'strong))
   ("text v" (make 'verbatim))
-  ("text 0" (make-section 'chapter))
-  ("text 1" (make-section 'section))
-  ("text 2" (make-section 'subsection))
-  ("text 3" (make-section 'subsubsection))
+  ("text 0" (smart-insert-heading 'chapter))
+  ("text 1" (smart-insert-heading 'section))
+  ("text 2" (smart-insert-heading 'subsection))
+  ("text 3" (smart-insert-heading 'subsubsection))
   ("text 4" (make-section 'paragraph))
   ("text 5" (make-section 'subparagraph))
   ("text 6" (make-section 'appendix))
@@ -508,3 +439,4 @@
 (kbd-map
   (:mode in-std?)
   ("std @" (go-to-section-title)))
+(debug-message "keyboard" "(text text-kbd): kbd-map registered\n")

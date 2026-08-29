@@ -17,28 +17,36 @@
 (" (length: " "（长度为")
 ("1.5 line spacing" "1.5 倍行距")
 ("Upgrade VIP" "升级会员")
-("Upgrade to unlock AI writing, MathOCR, and more advanced features." "开通会员，立即解锁 AI 写作、MathOCR 等高阶功能。")
-("Liii STEM can make mistakes. Check important info." "内容由 AI 生成，请仔细甄别")
-("Does the current AI chat support images?" "当前 AI 对话是否支持图片？")
+("Upgrade to unlock AI writing, MathOCR, and more advanced features."
+  "开通会员，立即解锁 AI 写作、MathOCR 等高阶功能。"
+) ;
+("Liii STEM can make mistakes. Check important info."
+  "内容由 AI 生成，请仔细甄别"
+) ;
+("Does the current AI chat support images?"
+  "当前 AI 对话是否支持图片？"
+) ;
 ("No, it does not." "不支持。")
 ("All" "全部")
 ("Advanced footer" "高级页脚")
 ("Advanced header" "高级页眉")
 ("Advanced page numbering" "高级页码")
 ("Allow multiple spaces" "允许多个空格")
-("A leading % on the first line starts a chat command." "首行的第一个字符是 %，表示这是对话指令。")
+("A leading % on the first line starts a chat command."
+  "首行的第一个字符是 %，表示这是对话指令。"
+) ;
 ("Angle brackets ⟨ ⟩" "尖括号 ⟨ ⟩")
-("Applying from" "起始于")
-("Applying to" "结束于")
+("Applying to" "应用到")
 ("Archive" "归档")
 ("Archived (%1)" "已归档 (%1)")
 ("Archive selected" "归档所选")
 ("Archive selected (%1)" "归档所选 (%1)")
 ("As" "作为")
-("Auto backup:" "自动备份:")
+("Auto backup" "自动备份")
 ("Backslash \\ /" "反斜线 \\ /")
 ("BibTeX command" "BibTeX命令")
 ("Bitmap export resolution (dpi):" "Bitmap 导出分辨率（dpi）：")
+("Border color" "边框颜色")
 ("Braces { }" "大括号 { }")
 ("Brackets [ ]" "中括号 [ ]")
 ("Buy Now!" "现在购买！")
@@ -48,6 +56,7 @@
 ("Ceiling brackets ⌈ ⌉" "上取整括号 ⌈ ⌉")
 ("CJK" "中日韩")
 ("CSS stylesheet:" "CSS 样式表：")
+("Claim Membership" "领取会员")
 ("Clipboard image format:" "剪贴板图片格式：")
 ("Cloud backup" "云备份")
 ("Conservative conversion options" "保守的转换选项")
@@ -66,8 +75,12 @@
 ("Empty brackets . ." "空括号 . .")
 ("Empty PDF data received" "收到的PDF数据为空")
 ("End::keyboard" "End")
-("Expand TeXmacs macros with no LaTeX equivalents" "展开没有 LaTeX 等价项的 TeXmacs 宏")
-("Experimental features (to be used with care)" "实验性功能（请谨慎使用）")
+("Expand TeXmacs macros with no LaTeX equivalents"
+  "展开没有 LaTeX 等价项的 TeXmacs 宏"
+) ;
+("Experimental features (to be used with care)"
+  "实验性功能（请谨慎使用）"
+) ;
 ("expired" "到期")
 ("Expired" "已过期")
 ("Export mathematical formulas as MathJax" "将数学公式导出为 MathJax")
@@ -78,27 +91,40 @@
 ("Failed to save" "无法保存")
 ("Floor brackets ⌊ ⌋" "下取整括号 ⌊ ⌋")
 ("GNU FDL" "GNU自由文档许可证")
-("GNU TeXmacs comes without any form of legal warranty" "GNU TeXmacs 无任何形式的法律保证")
-("GNU TeXmacs falls under the GNU general public license" "GNU TeXmacs 使用 GNU 通用公共许可授权")
+("GNU TeXmacs comes without any form of legal warranty"
+  "GNU TeXmacs 无任何形式的法律保证"
+) ;
+("GNU TeXmacs falls under the GNU general public license"
+  "GNU TeXmacs 使用 GNU 通用公共许可授权"
+) ;
 ("Glue multiple spaces" "粘合多个空格")
 ("Home::keyboard" "Home")
 ("Image download failed: %1" "图片下载失败: %1")
 ("Image file" "图片文件")
+("Images are not supported in AI chat" "AI聊天中暂不支持图像")
 ("JPEG File InterChange Format" "JPEG文件交换格式")
 ("Keep track of source code" "保持源代码追踪")
 ("Log in Now!" "现在登录！")
 ("Lab Report" "实验报告")
-("Merge lines into paragraphs unless separated by blank lines" "无空行分隔时自动合并多行为段落")
+("Merge lines into paragraphs unless separated by blank lines"
+  "无空行分隔时自动合并多行为段落"
+) ;
 ("Math Modeling" "数学建模")
 ("Multi-select" "多选")
 ("No matching command found!" "未找到匹配指令！")
 ("No multiple spaces" "不允许多个空格")
 ("NSFC Young Scientists Fund" "国自然基金青年基金申请模板")
-("NSFC Young Scientists Fund (Category C) Application" "国家自然科学基金青年科学基金项目（C类）申请书")
+("NSFC Young Scientists Fund (Category C) Application"
+  "国家自然科学基金青年科学基金项目（C类）申请书"
+) ;
 ("New conversation" "新会话")
 ("Only convert changes when re-importing" "仅在重新导入时转换更改")
-("Only convert changes with respect to imported version" "仅转换相较于已导入版本的更改")
-("Only convert changes with respect to tracked version" "仅转换相较于已追踪版本的更改")
+("Only convert changes with respect to imported version"
+  "仅转换相较于已导入版本的更改"
+) ;
+("Only convert changes with respect to tracked version"
+  "仅转换相较于已追踪版本的更改"
+) ;
 ("Only show paragraphs with hits" "仅显示包含匹配项的段落")
 ("Open PDF?" "PDF导出完成，是否要打开文件？")
 ("PageDown::keyboard" "PageDown")
@@ -116,10 +142,36 @@
 ("Prompt on scripts" "每次接受脚本时都询问")
 ("Reasoning" "推理中")
 ("Rename" "重命名")
-("Replace TeXmacs styles with no LaTeX equivalents" "替换没有 LaTeX 等价项的 TeXmacs 样式")
-("Requires restarting Mogan STEM to take full effect. Restart now?" "需要重新启动 Mogan STEM 才能完全生效。现在重启吗？")
-("Requires restarting Liii STEM to take full effect. Restart now?" "需要重新启动 Liii STEM 才能完全生效。现在重启吗？")
-("Restart TeXmacs in order to let changes take effect" "重启TeXmacs以使您的更改生效")
+("Replace TeXmacs styles with no LaTeX equivalents"
+  "替换没有 LaTeX 等价项的 TeXmacs 样式"
+) ;
+("Restart TeXmacs in order to let changes take effect"
+  "重启TeXmacs以使您的更改生效"
+) ;
+("Restart" "重启")
+("Channel switched; the next release on this channel will be offered"
+  "已切换更新通道，该通道发布新版本后将自动提供更新"
+) ;
+("Switch to the Beta update channel? Beta releases may be unstable."
+  "切换到测试版（Beta）更新通道？测试版本可能不稳定。"
+) ;
+("Switch back to the Stable update channel? The latest stable version may be older than the current one."
+  "切回稳定版（Stable）更新通道？稳定版最新版本可能低于当前版本。"
+) ;
+("The application will check for updates on the new channel and restart to apply. Continue?"
+  "应用将在新通道检查更新并重启以应用。是否继续？"
+) ;
+("The update is ready. Restart now to apply it?"
+  "更新已下载完成，是否立即重启以应用更新？"
+) ;
+("The update will be applied the next time you start the application"
+  "更新将在下次启动应用时自动应用"
+) ;
+("Downloading the update..." "正在下载更新，请稍候...")
+("Timed out waiting for the update check" "等待更新检查超时")
+("Timed out waiting for the previous update task"
+  "等待上一个更新任务超时"
+) ;
 ("Restore" "恢复")
 ("Return::keyboard" "Return")
 ("Save change to" "保存文档到")
@@ -129,7 +181,9 @@
 ("Scale of the graphical user interface" "图形界面显示比例")
 ("Scan disk for fonts" "扫描磁盘查找字体")
 ("Search conversations..." "搜索会话...")
-("See Help -> Plugins -> LLM for command documentation." "请查看 帮助 -> 插件 -> LLM 以获得所有指令的文档。")
+("See Help -> Plugins -> LLM for command documentation."
+  "请查看 帮助 -> 插件 -> LLM 以获得所有指令的文档。"
+) ;
 ("Select all" "全选")
 ("Shape::ornament:" "形状:")
 ("SimFang" "仿宋")
@@ -143,35 +197,58 @@
 ("Space::keyboard" "Space")
 ("Sprout User" "发芽用户")
 ("Start an AI interactive session" "AI功能")
-("Store tracking information in LaTeX files" "在 LaTeX 文件中保存追踪信息")
+("Store tracking information in LaTeX files"
+  "在 LaTeX 文件中保存追踪信息"
+) ;
 ("Style for seminar" "研讨会样式")
 ("Style parameters" "样式参数")
 ("System prompt updated. Length: " "系统提示词已设置，长度为")
-("Switching non-empty documents to Beamer style is not supported" "不支持非空文档切换到beamer样式")
+("Switching non-empty documents to Beamer style is not supported"
+  "不支持非空文档切换到beamer样式"
+) ;
 ("Tab::keyboard" "Tab")
 ("Tag Image File Format" "标记图像文件格式")
 ("Taiwan" "中国台湾")
 ("TeXmacs macro" "TeXmacs宏")
 ("TeXmacs online docs" "TeXmacs在线文档")
-("The target file is not writable. Save as a different file?" "目标文件不可写，是否另存为？")
-("The specified file does not exist. File path: " "您指定的文件不存在。文件路径为：")
-("The current document or its directory has read-only attributes." "当前文档或文档所在目录为只读属性，")
+("The target file is not writable. Save as a different file?"
+  "目标文件不可写，是否另存为？"
+) ;
+("The specified file does not exist. File path: "
+  "您指定的文件不存在。文件路径为："
+) ;
+("The current document or its directory has read-only attributes."
+  "当前文档或文档所在目录为只读属性，"
+) ;
 ("Thinking" "思考中")
 ("University Thesis" "学位论文")
-("Unable to include file from another drive: " "无法包含另一个盘的文件：")
-("Unable to link images from another drive: " "无法链接另一个盘的图片：")
-("Unable to make animation from another drive: " "无法创建另一个盘的动画：")
-("Unable to make sound from another drive: " "无法创建另一个盘的声音：")
+("Unable to include file from another drive: "
+  "无法包含另一个盘的文件："
+) ;
+("Unable to link images from another drive: "
+  "无法链接另一个盘的图片："
+) ;
+("Unable to make animation from another drive: "
+  "无法创建另一个盘的动画："
+) ;
+("Unable to make sound from another drive: "
+  "无法创建另一个盘的声音："
+) ;
 ("Unable to make sound which url is none: " "无法创建空 URL 的声音：")
-("Unable to make thumbnail from another drive: " "无法创建另一个盘的缩略图：")
+("Unable to make thumbnail from another drive: "
+  "无法创建另一个盘的缩略图："
+) ;
 ("United Kingdom" "英国")
 ("United States" "美国")
-("Use CSS for more advanced formatting" "使用 CSS 进行更高级的格式化")
+("Use CSS for more advanced formatting"
+  "使用 CSS 进行更高级的格式化"
+) ;
 ("Use high resolution icons" "使用高分辨率图标")
-("Use line wrapping for lines which are longer than 80 characters" "自动换行超过 80 个字符的行")
+("Use line wrapping for lines which are longer than 80 characters"
+  "自动换行超过 80 个字符的行"
+) ;
 ("Use relative path" "使用相对路径")
 ("Use retina fonts" "使用适配视网膜屏的字体")
-("Use the Formatted Mogan Scheme" "使用格式化后的 Mogan Scheme")
 ("View reasoning" "查看推理")
 ("Windows Bitmap" "Windows位图")
 ("Writing" "生成回复")
@@ -273,7 +350,7 @@
 ("appendix" "附录")
 ("apply macro once" "仅这次使用宏")
 ("apply macro" "使用宏")
-("apply" "使用")
+("apply" "应用")
 ("april" "四月")
 ("arab" "阿拉伯")
 ("arc" "圆弧")
@@ -294,6 +371,7 @@
 ("aspect" "外观")
 ("assign" "指定")
 ("assumption" "假设")
+("fact" "事实")
 ("at fraction bar height" "在分式线高度")
 ("at the baseline" "在基线")
 ("at the bottom" "在底部")
@@ -338,7 +416,7 @@
 ("basic communication using pipes" "基本管道通信")
 ("basic data types" "基本数据类型")
 ("basic types" "基本型态")
-("basic" "基本的")
+("basic" "基本")
 ("be useful" "有用")
 ("beamer theme" "幻灯片主题")
 ("become a TeXmacs developer" "成为 TeXmacs 的开发者")
@@ -351,6 +429,7 @@
 ("bibliography style" "参考文献的样式文件")
 ("bibliography text" "参考文献目录名")
 ("bibliography" "参考文献")
+("bibtex → TeXmacs" "BibTeX → TeXmacs")
 ("big figure" "大图片及题注")
 ("big operator" "大运算符")
 ("big skip" "大间距")
@@ -358,6 +437,7 @@
 ("big" "大")
 ("binary operation" "二元运算")
 ("binary relation" "二元关系")
+("bitmap export resolution (dpi)" "位图导出分辨率 (dpi)")
 ("bitmap resolution" "位图分辨率")
 ("black" "黑色")
 ("blackboard bold" "黑板粗体")
@@ -366,6 +446,7 @@
 ("blackletter" "黑色字母")
 ("blank column" "空列")
 ("blank row" "空行")
+("blank page number" "空白页码")
 ("block content" "空白内容")
 ("block of code" "代码块")
 ("block" "有框表格")
@@ -445,7 +526,12 @@
 ("chapter::menu" "章节")
 ("character count" "字符数")
 ("character encoding" "字符编码")
-("check exported Pdf files for correctness" "检查导出的PDF文件的正确性")
+("character expansion" "字符扩展")
+("character contraction" "字符收缩")
+("cjk spacing" "CJK 字间距")
+("check exported Pdf files for correctness"
+  "检查导出的PDF文件的正确性"
+) ;
 ("check for automatic updates" "检测自动更新")
 ("check for updates" "检查更新")
 ("check text for spelling errors" "检查拼写")
@@ -454,7 +540,7 @@
 ("chinese" "中文")
 ("choice" "选择")
 ("Choose source directory" "选择源目录")
-("Choose destination directory"   "选择目标目录")
+("Choose destination directory" "选择目标目录")
 ("Choose binary file" "选择可执行文件")
 ("circle" "圆圈")
 ("citation" "引用")
@@ -462,7 +548,9 @@
 ("cite" "引文")
 ("class" "类")
 ("clear all fields" "清除全部区域")
-("clear font cache under TEXMACS_HOME_PATH and local cache path" "清除TEXMACS_HOME_PATH和系统本地缓存路径下的字体缓存")
+("clear font cache under TEXMACS_HOME_PATH and local cache path"
+  "清除TEXMACS_HOME_PATH和系统本地缓存路径下的字体缓存"
+) ;
 ("clear font cache" "清除字体缓存")
 ("Clear list" "清空列表")
 ("clear menu" "清除列表")
@@ -491,7 +579,9 @@
 ("closing style" "结束风格")
 ("closing" "")
 ("code" "代码")
-("Color formulas and several other basic tags" "着色公式和一些基础标记")
+("Color formulas and several other basic tags"
+  "着色公式和一些基础标记"
+) ;
 ("color of the axes" "坐标轴颜色")
 ("color of the subunits" "子单元颜色")
 ("color of the units" "单元颜色")
@@ -537,6 +627,7 @@
 ("content tag" "语义标记")
 ("content" "内容")
 ("context dependent icons" "相关工具栏")
+("contextual hints" "上下文提示")
 ("continuation of" "延续")
 ("Continued fraction" "连分式")
 ("contribute" "参与")
@@ -580,6 +671,7 @@
 ("curve intersections" "曲线交点")
 ("curve points" "曲线点")
 ("curve" "曲线")
+("custom" "自定义")
 ("custom tab" "自定义制表符")
 ("custom tab" "自定义制表符")
 ("customizations" "定制")
@@ -605,6 +697,7 @@
 ("dash unit" "短线单位")
 ("dash" "短线")
 ("dashes" "短线")
+("Draft" "草稿")
 ("data conversion" "数据转换")
 ("data format" "数据格式")
 ("data" "数据")
@@ -657,6 +750,7 @@
 ("diamond" "菱形")
 ("directory" "目录")
 ("disable case sensitivity" "忽略大小写")
+("disable emoji shortcuts" "关闭 Emoji 快捷键")
 ("disable first indentation after" "")
 ("disable first indentation before" "")
 ("disable first indentation" "禁用首段缩进")
@@ -698,7 +792,9 @@
 ("dot" "点")
 ("dots" "点")
 ("double stroke" "")
-("Double the zoom factor for TeXmacs documents" "将TeXmacs文档的显示放大两倍")
+("Double the zoom factor for TeXmacs documents"
+  "将TeXmacs文档的显示放大两倍"
+) ;
 ("down" "下")
 ("Done" "完成")
 ("download" "下载")
@@ -736,9 +832,12 @@
 ("ElegantBook Notes Template" "优美的笔记模板")
 ("ElegantBook-style notes template" "ElegantBook 风格的笔记模板")
 ("ellipse" "椭圆")
+("hyperbola" "双曲线")
+("parabola" "抛物线")
 ("elsevier" "爱思唯尔")
 ("email" "电子邮件")
 ("Email not set" "未绑定邮箱")
+("emoji shortcuts" "Emoji 快捷键")
 ("emphasize text" "强调文本")
 ("emphasize" "强调")
 ("empty box" "空白的区域")
@@ -833,6 +932,7 @@
 ("explain" "解释")
 ("explained" "解释")
 ("explicit keystroke" "按键序列")
+("extra interline space" "额外行间距")
 ("export as" "转换成")
 ("export bibliographies as links" "将参考文献导出为链接")
 ("export formulas as images" "将公式转换成图像")
@@ -862,7 +962,9 @@
 ("field" "区域")
 ("figure" "图")
 ("file name" "文件名")
-("File not found, removed from recent list" "文件未找到，已从最近列表中移除")
+("File not found, removed from recent list"
+  "文件未找到，已从最近列表中移除"
+) ;
 ("file not found" "无此文件")
 ("file type" "文件类型")
 ("file" "文件")
@@ -972,7 +1074,9 @@
 ("Global hide section numbers" "全局隐藏节编号")
 ("Global hide subsection numbers" "全局隐藏小节编号")
 ("Global hide subsubsection numbers" "全局隐藏子节编号")
-("Global numbering is hidden, toggle has no effect" "已设置全局隐藏编号，此处切换不生效")
+("Global numbering is hidden, toggle has no effect"
+  "已设置全局隐藏编号，此处切换不生效"
+) ;
 ("global history" "全局历史")
 ("global status" "全局状态")
 ("glossary entry" "术语项")
@@ -992,6 +1096,8 @@
 ("Graphics mode" "绘图模式")
 ("graphical effects" "图形效果")
 ("graphical interface" "图形界面")
+("ghost lines" "智能标尺")
+("Ghost text" "幽灵文本补全")
 ("graphics geometry" "画布设置")
 ("graphics grids" "网格设置")
 ("graphics overlay" "图形图层")
@@ -1015,6 +1121,7 @@
 ("gui" "界面")
 ("h modifier" "")
 ("hangul" "谚文")
+("hanzi style" "一, 二, 三")
 ("happy typing" "")
 ("has been aborted" "")
 ("has completed its task" "")
@@ -1041,13 +1148,19 @@
 ("high resolution settings" "高分屏设置")
 ("highlight errors" "高亮错误")
 ("history" "历史")
-("hold down CTRL and click the mouse to follow the link" "按住CTRL并单击鼠标以跟踪链接")
-("hold down COMMAND and click the mouse to follow the link" "按住COMMAND并单击鼠标以跟踪链接")
+("hold down CTRL and click the mouse to follow the link"
+  "按住CTRL并单击鼠标以跟踪链接"
+) ;
+("hold down COMMAND and click the mouse to follow the link"
+  "按住COMMAND并单击鼠标以跟踪链接"
+) ;
 ("home" "主页")
 ("homepage" "主页")
+("homoglyph correct" "同形异义字修正")
 ("homoglyphs" "同形异义符")
 ("horizontal alignment" "水平对齐")
 ("horizontal cell alignment" "")
+("horizontal collapse distance" "水平折叠距离")
 ("horizontal ink separation" "")
 ("horizontal part" "水平部分")
 ("horizontal position" "")
@@ -1057,6 +1170,7 @@
 ("horizontally center the cell" "")
 ("how much longer may pages become" "")
 ("how much shorter may pages become" "")
+("html → TeXmacs" "Html → TeXmacs")
 ("huge" "巨大")
 ("hungarian" "匈牙利语")
 ("hybrid command" "")
@@ -1074,15 +1188,29 @@
 ("import font" "导入字体")
 ("import selections as" "导入到选中区域")
 ("import sessions" "导入会话")
-("import sophisticated objects as pictures" "将复杂的对象作为图片导入")
+("import sophisticated objects as pictures"
+  "将复杂的对象作为图片导入"
+) ;
 ("import" "导入")
 ("improving the current implementation" "改进当前的实作")
-("Insert clipboard content as 'HTML'" "以“HTML”形式插入剪贴板的内容")
-("Insert clipboard content as 'LaTeX'" "以“LaTeX”形式插入剪贴板的内容")
-("Insert clipboard content as 'Markdown'" "以“Markdown”形式插入剪贴板的内容")
-("Insert clipboard content as 'MathML'" "以“MathML”形式插入剪贴板的内容")
-("insert clipboard content as 'plain text'" "以“纯文本”形式插入剪贴板的内容")
-("Insert clipboard content as 'code'" "以“代码”形式插入剪贴板的内容")
+("Insert clipboard content as 'HTML'"
+  "以“HTML”形式插入剪贴板的内容"
+) ;
+("Insert clipboard content as 'LaTeX'"
+  "以“LaTeX”形式插入剪贴板的内容"
+) ;
+("Insert clipboard content as 'Markdown'"
+  "以“Markdown”形式插入剪贴板的内容"
+) ;
+("Insert clipboard content as 'MathML'"
+  "以“MathML”形式插入剪贴板的内容"
+) ;
+("insert clipboard content as 'plain text'"
+  "以“纯文本”形式插入剪贴板的内容"
+) ;
+("Insert clipboard content as 'code'"
+  "以“代码”形式插入剪贴板的内容"
+) ;
 ("in popup windows" "在弹出窗口")
 ("inactive" "")
 ("inanimated" "无动画")
@@ -1188,6 +1316,8 @@
 ("insert chapter" "")
 ("insert circles" "插入圆")
 ("insert ellipses" "插入椭圆")
+("insert hyperbolas" "插入双曲线")
+("insert parabolas" "插入抛物线")
 ("insert closed splines" "插入闭合曲线")
 ("insert column to the left" "插入列(在左侧)")
 ("insert column to the right" "插入列(在右侧)")
@@ -1234,6 +1364,7 @@
 ("insert medium horizontal space" "")
 ("insert medium vertical space" "")
 ("insert min" "插入最小值")
+("insert missing invisible" "插入缺失的不可见符")
 ("insert multiple paragraphs" "插入多行文本")
 ("insert negative horizontal space" "")
 ("insert new item or number" "插入新项或序号")
@@ -1271,10 +1402,16 @@
 ("insert title" "插入标题")
 ("insert value" "")
 ("insert" "插入")
-("Insert the recognized LaTeX code into the document" "仅将识别后的LaTeX代码插入文档")
-("Insert the image and the recognized LaTeX code into the document" "将图片与识别后的LaTeX代码插入文档")
+("Insert the recognized LaTeX code into the document"
+  "仅将识别后的LaTeX代码插入文档"
+) ;
+("Insert the image and the recognized LaTeX code into the document"
+  "将图片与识别后的LaTeX代码插入文档"
+) ;
 ("Insert only the picture into the document" "仅将图片插入文档")
-("Inserting bibliography in the current document" "在当前文件插入参考文献")
+("Inserting bibliography in the current document"
+  "在当前文件插入参考文献"
+) ;
 ("insertion" "嵌入")
 ("inside mathematics" "在数学模式中")
 ("interactive command" "")
@@ -1282,10 +1419,13 @@
 ("interfacing TeXmacs with other systems" "与其它系统交互")
 ("interfacing" "用户界面")
 ("interjection" "")
+("intercharacter compression" "字符间压缩")
+("intercharacter stretching" "字符间拉伸")
 ("interline separation" "行间分隔")
 ("interline space" "行间空隔")
 ("Internal format" "内部格式")
 ("internationalization" "国际化")
+("Internet Search" "联网搜索")
 ("interparagraph space" "段落间空隔")
 ("interrupt execution" "中断执行")
 ("introduction" "介绍")
@@ -1316,7 +1456,9 @@
 ("keyboard equivalent" "等效快捷键")
 ("keyboard modifiers" "")
 ("keyboard shortcut" "键盘快捷键")
+("keyboard shortcut style" "快捷键显示风格")
 ("keyboard" "键盘")
+("keyboard behavior" "键盘行为")
 ("keymaps" "")
 ("keyword" "关键字")
 ("keywords" "关键词")
@@ -1327,6 +1469,7 @@
 ("landscape" "横向")
 ("language" "语言")
 ("laptop presentations" "幻灯片演示")
+("later" "稍后")
 ("large cells" "大单元格")
 ("large closing bracket" "大结束括号")
 ("large delimiter" "")
@@ -1345,6 +1488,7 @@
 ("last similar" "相似的(最后面)")
 ("last" "最后面")
 ("latex command" "LaTeX命令")
+("latex → TeXmacs" "LaTeX → TeXmacs")
 ("latin" "")
 ("latin" "拉丁文")
 ("layout" "布局")
@@ -1394,13 +1538,14 @@
 ("line wrapping inside cell" "单元格内换行")
 ("line wrapping" "自动换行")
 ("Interline space" "行距")
-("Line spacing presets:" "行距预设:")
+("Line spacing presets" "行距预设")
 ("line" "线")
 ("linear algebra" "线性代数")
 ("lines around block" "双划线块")
 ("link image" "链接图片")
 ("link to URL" "URL链接")
 ("link" "链接")
+("linked in both directions" "两方向联动")
 ("linking tool" "链接菜单")
 ("list of abbreviations" "符号和缩略语说明")
 ("list of figures" "图形目录")
@@ -1430,9 +1575,13 @@
 ("logarithmic" "对数坐标")
 ("logarithms" "对数")
 ("Log In" "登录")
-("Log in and enjoy seamless Markdown import." "登录即享Markdown无缝导入")
+("Log in and enjoy seamless Markdown import."
+  "登录即享Markdown无缝导入"
+) ;
 ("Log in to chat with the AI." "登录即可与AI进行对话")
-("Log in to sync settings and access all features" "登录即可同步设置并访问所有功能。")
+("Log in to sync settings and access all features"
+  "登录即可同步设置并访问所有功能。"
+) ;
 ("Log in to use the latest OCR model." "登录即用OCR最新模型")
 ("login" "登录")
 ("Login error, please log in again." "登录有误，请重新登录")
@@ -1504,7 +1653,7 @@
 ("math font" "")
 ("math symbols" "数学符号")
 ("math" "数学")
-("Math mode" "数学模式") 
+("Math mode" "数学模式")
 ("mathematical and customized input" "数学和定制的输入")
 ("mathematical font" "数学字体")
 ("mathematical formulas" "数学公式")
@@ -1539,6 +1688,7 @@
 ("metafont bitmaps only" "仅只使用 Metafont 字体")
 ("middle baseline" "腰部基线")
 ("middle" "居中")
+("minimal line separation" "最小行间距")
 ("minimal number of columns" "列数最小值")
 ("minimal number of rows" "行数最小值")
 ("minimal" "最小")
@@ -1546,12 +1696,15 @@
 ("minimum" "最小值")
 ("minus" "")
 ("miscellaneous features" "其它特性")
+("miscellaneous preferences" "杂项首选项")
 ("miscellaneous" "杂项")
 ("mod" "")
 ("mode dependent icons" "模式工具栏")
 ("mode" "模式")
 ("modifier" "")
-("Modifying bibliography in the current document" "在当前文件修改参考文献")
+("Modifying bibliography in the current document"
+  "在当前文件修改参考文献"
+) ;
 ("modify bibliography" "修改参考文献")
 ("modify cell alignment" "改变单元格对齐")
 ("modify cell border" "")
@@ -1563,7 +1716,9 @@
 ("mogan" "墨干")
 ("mongolian" "")
 ("month" "月")
-("more information about GNU TeXmacs can be found in the Help" "更多关于 GNU TeXmacs 的信息可查看帮助")
+("more information about GNU TeXmacs can be found in the Help"
+  "更多关于 GNU TeXmacs 的信息可查看帮助"
+) ;
 ("mosaic" "")
 ("motif" "主题")
 ("move down" "")
@@ -1576,6 +1731,9 @@
 ("multiple documents share window" "多个文档共享窗口")
 ("multiple root" "高次方根")
 ("mutator tags" "")
+("mutually exclusive with mathjax / images" "与 MathJax / images 互斥")
+("mutually exclusive with mathjax / mathml" "与 MathJax / MathML 互斥")
+("mutually exclusive with mathml / images" "与 MathML / images 互斥")
 ("my documents" "个人文档")
 ("n-th root" "")
 ("n-th root" "高次方根")
@@ -1661,6 +1819,13 @@
 ("notification" "提示")
 ("november" "")
 ("number equation" "编号方程")
+("Monday" "周一")
+("Tuesday" "周二")
+("Wednesday" "周三")
+("Thursday" "周四")
+("Friday" "周五")
+("Saturday" "周六")
+("Sunday" "周日")
 ("number of columns" "栏数")
 ("number of polar steps" "极坐标步数")
 ("number of subunit steps" "子单元步数")
@@ -1685,8 +1850,8 @@
 ("odd page text" "")
 ("odd page" "奇数页")
 ("off" "关闭")
-("ok" "")
 ("ok" "确认")
+("OK" "确认")
 ("old english" "")
 ("old slavonic" "")
 ("old style" "旧风格")
@@ -1717,7 +1882,7 @@
 ("Open document" "打开文档")
 ("open a document" "打开文档")
 ("Open a Document" "打开")
-("Open backup folder" "打开备份文件夹")
+("View help" "查看帮助")
 ("open a new buffer" "")
 ("open bibliography" "打开参考文献")
 ("open identities" "打开身份信息")
@@ -1773,7 +1938,8 @@
 ("page height" "页面高度")
 ("page insertion" "页面插入")
 ("page layout" "页面布局")
-("Page number style layer" "页码样式层")
+("Page number style" "页码样式")
+("Page mapping" "页码映射")
 ("page number text" "设定页码文字")
 ("Page number" "页码")
 ("page number" "页码")
@@ -1844,7 +2010,10 @@
 ("Please choose a valid %1 file" "请选择一个有效的 %1 文件")
 ("Please close the auxiliary window first" "请先关闭辅助窗口")
 ("Please login to view your account information." "请登录查看账户信息")
-("Please restart Mogan to apply the changes." "请重启Mogan以应用更改。")
+("Please pick one style" "请选择一种样式")
+("Please restart Mogan to apply the changes."
+  "请重启Mogan以应用更改。"
+) ;
 ("plot" "描画图形")
 ("plug-ins" "插件")
 ("plugin" "插件")
@@ -1864,7 +2033,7 @@
 ("position float" "")
 ("position floating object" "")
 ("position the table" "改变表格位置")
-("position" "")
+("position" "位置")
 ("poster" "海报")
 ("postscript image" "")
 ("postscript" "")
@@ -1875,7 +2044,9 @@
 ("preferences for tag" "全局设置")
 ("preferences" "首选项")
 ("prefix by section number" "以章节号为前缀")
-("Prepend chapter number prefix for section numbers" "节编号显示章编号的前缀")
+("Prepend chapter number prefix for section numbers"
+  "节编号显示章编号的前缀"
+) ;
 ("presentation mode" "演讲模式")
 ("Presentation slides" "演示文稿")
 ("Preview" "预览")
@@ -1912,7 +2083,9 @@
 ("printing command" "打印程序")
 ("problem" "题目")
 ("produce Pdf using native export filter" "使用原生的PDF导出工具")
-("produce Postscript using native export filter" "使用原生的Postscript导出工具")
+("produce Postscript using native export filter"
+  "使用原生的Postscript导出工具"
+) ;
 ("professional" "专业")
 ("prog font family" "")
 ("prog font series" "")
@@ -1953,7 +2126,7 @@
 ("quit" "退出")
 ("quotation" "长引用")
 ("quote" "引用")
-("range" "")
+("range" "范围")
 ("read-only" "只读")
 ("really close it" "是否真要关闭它")
 ("really huge" "非常大")
@@ -1985,6 +2158,7 @@
 ("reference guide" "参考指南")
 ("reference" "参考")
 ("references" "参考")
+("refresh" "刷新")
 ("Regular User" "普通用户")
 ("regular" "正规")
 ("release" "")
@@ -2014,6 +2188,7 @@
 ("remove package" "取消宏包")
 ("remove previous field" "删除前一个区域")
 ("remove rightwards" "删除此列")
+("remove superfluous invisible" "移除多余不可见符")
 ("remove tag" "删除标记")
 ("remove this branch" "删除当前这个")
 ("remove this column" "删除此列")
@@ -2023,7 +2198,7 @@
 ("remove" "删除")
 ("rename" "重命名")
 ("rendering options for tag" "局部设置")
-("Register now and receive a 7-day membership." "注册即送7天会员")
+("Register now and receive a 3-day membership." "注册即送3天会员")
 ("Renew" "续费")
 ("Renew Early" "提前续费")
 ("Renew Now" "续费会员")
@@ -2038,8 +2213,12 @@
 ("replace toolbar" "替换工具栏")
 ("replace unrecognized styles" "替换无法识别的样式")
 ("replace one occurrence (Enter)" "替换一个匹配项 (Enter)")
-("replace all further occurrences (Ctrl+Enter)" "替换所有后续匹配项 (Ctrl+Enter)")
-("Replace all further occurrences (Command+Enter)" "替换所有后续匹配项 (Command+Enter)")
+("replace all further occurrences (Ctrl+Enter)"
+  "替换所有后续匹配项 (Ctrl+Enter)"
+) ;
+("Replace all further occurrences (Command+Enter)"
+  "替换所有后续匹配项 (Command+Enter)"
+) ;
 ("replace" "替换")
 ("replaced one occurrence" "")
 ("replaced" "")
@@ -2050,6 +2229,7 @@
 ("resize objects" "缩放对象")
 ("resize" "改变大小")
 ("resized" "")
+("restart" "重启")
 ("retain" "保留")
 ("retina screen settings" "高分屏设置")
 ("retina settings" "高分屏设置")
@@ -2193,6 +2373,7 @@
 ("set or get environment variables" "")
 ("set paragraph margins" "段落边距")
 ("set paragraph mode" "段落对齐")
+("set position" "设置位置")
 ("set printer dpi" "")
 ("set printing command" "")
 ("set properties" "设置属性")
@@ -2219,6 +2400,8 @@
 ("shortcuts editor" "快捷键编辑器")
 ("show all parts" "显示所有部分")
 ("show all slides" "显示所有幻灯片")
+("show focus" "显示焦点")
+("show full context" "显示完整上下文")
 ("show grid" "显示网格")
 ("show header and footer" "显示页眉页脚")
 ("show hidden" "显示隐藏内容")
@@ -2227,10 +2410,12 @@
 ("show memory usage in the footer" "在状态栏显示内存占用")
 ("show on screen" "")
 ("show one part" "显示一部分")
+("show only semantic focus" "仅显示语义焦点")
 ("show panorama" "显示全景")
 ("show preamble" "显示序言")
 ("show several parts" "显示几部分")
 ("show subunits" "显示子单元")
+("show table cells" "显示表格单元格")
 ("show timings" "显示花费时间")
 ("show" "显示")
 ("shrinking factor" "收缩比例")
@@ -2279,6 +2464,7 @@
 ("space bar in text mode" "文本模式中的空格键")
 ("space between lines" "行间空白")
 ("space between paragraphs" "段间空白")
+("space stretchability" "空间伸展性")
 ("spacing" "间隔")
 ("spanish" "西班牙语")
 ("special functions" "特殊函数")
@@ -2370,6 +2556,11 @@
 ("surface" "曲面")
 ("swedish" "瑞典语")
 ("swiss" "")
+("switch interface theme" "切换界面主题")
+("switch language" "切换语言")
+("switch keyboard shortcut style" "切换快捷键显示风格")
+("switch look and feel" "切换外观风格")
+("switch preference" "切换首选项")
 ("switch to first" "跳到第前面")
 ("switch to formula style" "")
 ("switch to last" "跳到最后面")
@@ -2398,12 +2589,20 @@
 ("tabular" "无框表格")
 ("tags with special rendering" "具有特殊渲染的标签")
 ("teXmacs as an interface" "TeXmacs 的交互式界面")
-("teXmacs extensions to scheme and utilities" "对 Scheme 的扩展和实用工具")
+("teXmacs extensions to scheme and utilities"
+  "对 Scheme 的扩展和实用工具"
+) ;
 ("teXmacs fonts" "TeXmacs 字体")
 ("teXmacs notice" "")
 ("teXmacs plug-ins" "TeXmacs 的插件")
 ("teXmacs primitives" "TeXmacs 的原语")
 ("teXmacs style files" "TeXmacs 的样式文件")
+("texmacs → BibTeX" "TeXmacs → BibTeX")
+("texmacs → Html" "TeXmacs → Html")
+("texmacs → Image" "TeXmacs → Image")
+("texmacs → LaTeX" "TeXmacs → LaTeX")
+("texmacs → Pdf / Postscript" "TeXmacs → PDF / Postscript")
+("texmacs → Verbatim" "TeXmacs → 纯文本")
 ("template" "模板")
 ("Template Center" "模板中心")
 ("Template Error" "模板错误")
@@ -2445,23 +2644,43 @@
 ("the graphical user interface" "图形用户界面")
 ("the leaves of TeXmacs trees" "")
 ("the mycas example" "")
-("The OCR feature requires logging in to use..."  "OCR功能需要登录才能使用...")
+("The OCR feature requires logging in to use..."
+  "OCR功能需要登录才能使用..."
+) ;
 ("Sign In" "去登录")
 ("Sign in to start using OCR." "登录后即可开始使用 OCR 识别。")
 ("Sign in to use OCR" "登录后即可使用 OCR 识别")
-("Sign up now and get 7 days of membership for free!" "现在注册还送7天会员资格！")
-("The OCR feature requires an internet connection to use..." "OCR功能需要连接网络才能使用...")
-("Connect to the network to enjoy convenient and fast OCR features!" "连接网络享受方便又快捷的OCR功能！")
+("Sign up now and get 3 days of membership for free!"
+  "现在注册还送3天会员资格！"
+) ;
+("The OCR feature requires an internet connection to use..."
+  "OCR功能需要连接网络才能使用..."
+) ;
+("Connect to the network to enjoy convenient and fast OCR features!"
+  "连接网络享受方便又快捷的OCR功能！"
+) ;
 ("You have reached the limit of free uses..." "免费次数已达到上限...")
 ("Daily OCR limit reached" "今日 OCR 识别额度已用完")
-("Use your invite code to bring a friend, and get rewards together!" "使用邀请码邀请好友，两人均可获得会员奖励！")
-("Buy it! Convenient and fast OCR features!" "快来买！方便又快捷的OCR功能！")
+("Use your invite code to bring a friend, and get rewards together!"
+  "使用邀请码邀请好友，两人均可获得会员奖励！"
+) ;
+("Buy it! Convenient and fast OCR features!"
+  "快来买！方便又快捷的OCR功能！"
+) ;
 ("Upgrade" "升级会员")
-("Upgrade to continue using OCR." "升级会员后可继续使用 OCR 识别。")
+("Upgrade to continue using OCR."
+  "升级会员后可继续使用 OCR 识别。"
+) ;
 ("Daily AI chat limit reached" "今日 AI 聊天次数已达上限")
-("Upgrade to continue using AI chat." "升级会员后可继续使用 AI 聊天。")
-("Copy the image and press Ctrl+Shift+v to paste the OCR recognition result" "复制图片，按 Ctrl+Shift+V 粘贴OCR识别结果")
-("Copy the image and press Command+Shift+v to paste the OCR recognition result" "复制图片，按 Command+Shift+v 粘贴OCR识别结果")
+("Upgrade to continue using AI chat."
+  "升级会员后可继续使用 AI 聊天。"
+) ;
+("Copy the image and press Ctrl+Shift+v to paste the OCR recognition result"
+  "复制图片，按 Ctrl+Shift+V 粘贴OCR识别结果"
+) ;
+("Copy the image and press Command+Shift+v to paste the OCR recognition result"
+  "复制图片，按 Command+Shift+v 粘贴OCR识别结果"
+) ;
 ("An error occurred..." "出错了...")
 ("the primitive TeXmacs constructs" "")
 ("the standard TeXmacs styles" "TeXmacs 的标准样式")
@@ -2473,6 +2692,12 @@
 ("this document has been produced using" "此文档撰写于")
 ("this document has not been saved" "现工作的暂存区信息尚未保存")
 ("this line" "")
+("this change requires restarting Mogan STEM to take full effect."
+  "此更改需要重新启动 Mogan STEM 才能完全生效。"
+) ;
+("this change requires restarting Liii STEM to take full effect."
+  "此更改需要重新启动 Liii STEM 才能完全生效。"
+) ;
 ("this page footer" "当前页页脚")
 ("this page header" "当前页页眉")
 ("this page" "")
@@ -2494,14 +2719,25 @@
 ("to the right" "")
 ("today" "今天")
 ("toggle cell wrapping mode" "切换单元格换行模式")
-("toggle the preamble mode for the document" "切换到当前文档的导言模式")
-("toggle the visibility of the window's footer" "切换窗口底部状态栏的可见性")
-("toggle using current buffer as master file of project" "是否切换当前文档为项目的主文件")
+("toggle the preamble mode for the document"
+  "切换到当前文档的导言模式"
+) ;
+("toggle the visibility of the window's footer"
+  "切换窗口底部状态栏的可见性"
+) ;
+("toggle using current buffer as master file of project"
+  "是否切换当前文档为项目的主文件"
+) ;
 ("toggle whether we save auxiliary data" "切换是否存储辅助数据")
 ("toggle whether we show keyboard presses" "切换是否显示键盘按键")
-("Toggle mode for using reduced margins to save paper" "切换窄边距模式以节省纸张")
-("Toggle mode for using special margins for screen editing" "切换屏幕编辑专用边距模式")
+("Toggle mode for using reduced margins to save paper"
+  "切换窄边距模式以节省纸张"
+) ;
+("Toggle mode for using special margins for screen editing"
+  "切换屏幕编辑专用边距模式"
+) ;
 ("Toggle mode for using standard page numbering" "切换是否显示页码")
+("toggling enables related fields" "切换会启用相关字段")
 ("tools" "工具")
 ("top baseline" "顶部基线")
 ("top border" "")
@@ -2525,11 +2761,19 @@
 ("Trial Member" "体验会员")
 ("triangle" "三角形")
 ("trigonometry" "三角函数")
-("try to import formulas using LaTeX annotations" "尝试使用 LaTeX 注释导入公式")
-("Try Command+Shift+v, auto-detects format." "试试Command+Shift+v，自动识别格式。")
-("Try Ctrl+Shift+v, auto-detects format." "试试Ctrl+Shift+v，自动识别格式。")
+("try to import formulas using LaTeX annotations"
+  "尝试使用 LaTeX 注释导入公式"
+) ;
+("Try Command+Shift+v, auto-detects format."
+  "试试Command+Shift+v，自动识别格式。"
+) ;
+("Try Ctrl+Shift+v, auto-detects format."
+  "试试Ctrl+Shift+v，自动识别格式。"
+) ;
 ("Try now" "立即体验")
-("Wrong result? Use Selective Paste here." "结果不准确？请用此处的选择性粘贴。")
+("Wrong result? Use Selective Paste here."
+  "结果不准确？请用此处的选择性粘贴。"
+) ;
 ("tuple" "元组")
 ("turkish" "土耳其文")
 ("tutorial" "入门教程")
@@ -2569,6 +2813,8 @@
 ("up" "")
 ("up" "上")
 ("Update buffer" "更新缓冲区")
+("Update channel" "更新通道")
+("Update check failed: " "更新检查失败：")
 ("Update now" "立即更新")
 ("update from web" "")
 ("update image links" "")
@@ -2608,6 +2854,7 @@
 ("use italic font shape" "")
 ("use large font size" "")
 ("use left hand column as border" "")
+("use margin kerning" "使用边距字距调整")
 ("use mathml" "使用 mathml")
 ("use medium font series" "")
 ("use native menubar" "使用macOS原生菜单栏")
@@ -2647,6 +2894,7 @@
 ("variant" "字族")
 ("vector" "")
 ("verbatim" "纯文本")
+("verbatim → TeXmacs" "纯文本 → TeXmacs")
 ("verse" "诗文")
 ("Version" "版本")
 ("Version: %1" "版本: %1")
@@ -2668,6 +2916,8 @@
 ("view" "查看")
 ("view::menu" "视图")
 ("visible" "可见")
+("enabled only when semantic editing is on" "仅语义编辑开时可用")
+("enabled only when source tracking is on" "仅源代码追踪开时可用")
 ("visual grid" "可视网格")
 ("volume" "卷")
 ("warning" "警告")
@@ -2682,6 +2932,7 @@
 ("while" "")
 ("white" "白色")
 ("whitespace" "空白")
+("whole document" "整个文档")
 ("wide accent" "")
 ("wide bar" "")
 ("wide block" "标宽有框表格")
@@ -2729,8 +2980,12 @@
 ("your document is back in its original state" "")
 ("your first interface" "")
 ("your language" "使用语言")
-("Your membership has expired. Renew to continue using AI, MathOCR, and other member features" "会员已到期，续费后可继续使用 AI、MathOCR 等会员功能")
-("Your membership will expire within 7 days. Renew early for more savings" "会员将在 7 天内到期，提前续费享更多优惠")
+("Your membership has expired. Renew to continue using AI, MathOCR, and other member features"
+  "会员已到期，续费后可继续使用 AI、MathOCR 等会员功能"
+) ;
+("Your membership will expire within 7 days. Renew early for more savings"
+  "会员将在 7 天内到期，提前续费享更多优惠"
+) ;
 ("zigzag" "之字形")
 ("zoom factor" "缩放比例")
 ("zoom in" "放大")
@@ -2738,18 +2993,41 @@
 ("zoom" "缩放")
 ("zoom/unzoom objects" "放大/缩小对象")
 ("zoom/unzoom" "放大/缩小")
-("You are currently in guest mode, login to enable AI, MathOCR,and other features" "您当前处于访客状态，登录激活AI和公式识别等功能")
-("You are using v%1, and the latest stable version is v%2." "您正在使用 v%1，当前最新稳定版是 v%2。")
-("You are using v%1, and the latest stable version is v%2. Please click OK to visit the official website to download the latest stable version." "您正在使用 v%1，当前最新稳定版是 v%2。请点击确认前往官网下载最新稳定版。")
-("You are using v%1.\nThe latest stable version of Mogan STEM is v%2, and the latest stable version of Liii STEM is v%3." "您正在使用 v%1。\nMogan STEM 的最新稳定版是 v%2，Liii STEM 的最新稳定版是 v%3。")
-("You are using v%1.\nThe latest stable version of Mogan STEM is v%2, and the latest stable version of Liii STEM is v%3.\nPlease click OK to visit the official website to download the latest stable version." "您正在使用 v%1。\nMogan STEM 的最新稳定版是 v%2，Liii STEM 的最新稳定版是 v%3。\n请点击确认前往官网下载最新稳定版。")
-("You are using v%1, and the latest stable version of Liii STEM is v%2." "您正在使用 v%1，Liii STEM 的最新稳定版是 v%2。")
-("You are using v%1, and the latest stable version of Liii STEM is v%2.\nPlease click OK to visit the official website to download the latest stable version." "您正在使用 v%1，Liii STEM 的最新稳定版是 v%2。\n请点击确认前往官网下载最新稳定版。")
+("You are currently in guest mode, login to enable AI, MathOCR,and other features"
+  "您当前处于访客状态，登录激活AI和公式识别等功能"
+) ;
+("You are using v%1, and the latest stable version is v%2."
+  "您正在使用 v%1，当前最新稳定版是 v%2。"
+) ;
+("You are using v%1, and the latest stable version is v%2. Please click OK to visit the official website to download the latest stable version."
+  "您正在使用 v%1，当前最新稳定版是 v%2。请点击确认前往官网下载最新稳定版。"
+) ;
+("You are using v%1.\nThe latest stable version of Mogan STEM is v%2, and the latest stable version of Liii STEM is v%3."
+  "您正在使用 v%1。\nMogan STEM 的最新稳定版是 v%2，Liii STEM 的最新稳定版是 v%3。"
+) ;
+("You are using v%1.\nThe latest stable version of Mogan STEM is v%2, and the latest stable version of Liii STEM is v%3.\nPlease click OK to visit the official website to download the latest stable version."
+  "您正在使用 v%1。\nMogan STEM 的最新稳定版是 v%2，Liii STEM 的最新稳定版是 v%3。\n请点击确认前往官网下载最新稳定版。"
+) ;
+("You are using v%1, and the latest stable version of Liii STEM is v%2."
+  "您正在使用 v%1，Liii STEM 的最新稳定版是 v%2。"
+) ;
+("You are using v%1, and the latest stable version of Liii STEM is v%2.\nPlease click OK to visit the official website to download the latest stable version."
+  "您正在使用 v%1，Liii STEM 的最新稳定版是 v%2。\n请点击确认前往官网下载最新稳定版。"
+) ;
 ("Login Now" "立即登录")
 ("User Center" "用户中心")
 ("Use extensible brackets" "使用可伸缩括号")
-("Use \\space (eg. 1cm) in order to insert a blank with specified width" "使用 \\space（例如 1cm）来插入指定宽度的空白")
+("Use \\space (eg. 1cm) in order to insert a blank with specified width"
+  "使用 \\space（例如 1cm）来插入指定宽度的空白"
+) ;
 ("Style options" "样式选项")
 ("Framed input fields" "带框输入字段")
 ("Ring binder notebook style" "活页夹笔记本样式")
 ("Do not break up large formulas" "不拆分大型公式")
+("Please log in to use Magic Paste" "请登录后使用魔法粘贴")
+("Daily Magic Paste limit reached. Upgrade for unlimited access."
+  "今日魔法粘贴次数已达上限，升级会员可无限使用"
+) ;
+("Magic paste shortcut" "魔法粘贴快捷键")
+("Login" "登录")
+("Upgrade" "升级")

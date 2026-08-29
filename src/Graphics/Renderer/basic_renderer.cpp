@@ -9,8 +9,6 @@
  * in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
  ******************************************************************************/
 
-#if (defined(QTTEXMACS) || defined(AQUATEXMACS))
-
 #ifdef HAVE_INTPTR_T
 #ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
@@ -24,7 +22,8 @@ typedef long intptr_t;
 
 #include "analyze.hpp"
 #include "basic_renderer.hpp"
-#include "colors.hpp"
+#include <moebius/data/colors.hpp>
+using namespace moebius::data;
 #include "convert.hpp"
 #include "file.hpp"
 #include "font.hpp" // for the definition of font
@@ -202,5 +201,3 @@ bool
 gui_interrupted (bool check) {
   return check_event (check ? INTERRUPT_EVENT : INTERRUPTED_EVENT);
 }
-
-#endif

@@ -68,7 +68,7 @@
   (ahash-set! global-pattern-color key col)
   (refresh-now "pattern-sample")
   (refresh-now "pattern-options")
-  (update-menus)
+  (update-menus 'all)
 ) ;define
 
 (define (get-color key)
@@ -458,23 +458,11 @@
   (refreshable "pattern-sample"
     (resize "400px"
       "250px"
-      (texmacs-output `(document (block (tformat (cwith "1"
-                                                   "1"
-                                                   "1"
-                                                   "1"
-                                                   "cell-width"
-                                                   "396guipx")
-                                          (cwith "1"
-                                            "1"
-                                            "1"
-                                            "1"
-                                            "cell-height"
+      (texmacs-output `(document (block (tformat (cwith "1" "1" "1" "1"
+                                                   "cell-width" "396guipx")
+                                          (cwith "1" "1" "1" "1" "cell-height"
                                             "246guipx")
-                                          (cwith "1"
-                                            "1"
-                                            "1"
-                                            "1"
-                                            "cell-vmode"
+                                          (cwith "1" "1" "1" "1" "cell-vmode"
                                             "exact")
                                           (cwith ,"1"
                                             ,"1"

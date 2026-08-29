@@ -9,14 +9,17 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDockWidget>
 #include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QGestureEvent>
 #include <QKeyEvent>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPinchGesture>
 #include <QPushButton>
@@ -33,8 +36,10 @@
 #include "MuPDF/mupdf_renderer.hpp"
 #include "qt_chat_tab_widget.hpp"
 #include "qt_dpi_utils.hpp"
+#include "qt_gui.hpp"
 #include "qt_utilities.hpp"
 #include "scheme.hpp"
+#include "tm_sys_utils.hpp"
 #include <mupdf/fitz.h>
 
 #include <mutex>
@@ -65,15 +70,15 @@ PDFReaderWidget::PDFReaderWidget (QWidget* parent)
     : QWidget (parent), scrollArea_ (nullptr), contentWidget_ (nullptr),
       pageLayout_ (nullptr), mainLayout_ (nullptr), rubberBand_ (nullptr),
       rectSelectMode_ (false), rectSelectDragging_ (false),
-      hintLabel_ (nullptr), browseDragging_ (false), browseDragActive_ (false),
-      scroller_ (nullptr), pageCount_ (0), hasError_ (false),
-      targetDpi_ (DEFAULT_DPI), zoomFactor_ (1.0), pageAspectRatio_ (0.0),
-      pageBaseWidthPts_ (0.0), overLink_ (false), zoomDebounceTimer_ (nullptr),
-      resizeDebounceTimer_ (nullptr), gestureSafetyTimer_ (nullptr),
-      inPinchGesture_ (false), blockRender_ (false), autoFitApplied_ (false),
-      pinchStartZoom_ (1.0), zoomAnchorContentY_ (0.0),
-      zoomAnchorViewportY_ (0.0), zoomAnchorOldZoom_ (1.0),
-      hasZoomAnchor_ (false), renderCallCount_ (0) {
+      hintLabel_ (nullptr), hintToastActive_ (false), browseDragging_ (false),
+      browseDragActive_ (false), scroller_ (nullptr), pageCount_ (0),
+      hasError_ (false), targetDpi_ (DEFAULT_DPI), zoomFactor_ (1.0),
+      pageAspectRatio_ (0.0), pageBaseWidthPts_ (0.0), overLink_ (false),
+      zoomDebounceTimer_ (nullptr), resizeDebounceTimer_ (nullptr),
+      gestureSafetyTimer_ (nullptr), inPinchGesture_ (false),
+      blockRender_ (false), autoFitApplied_ (false), pinchStartZoom_ (1.0),
+      zoomAnchorContentY_ (0.0), zoomAnchorViewportY_ (0.0),
+      zoomAnchorOldZoom_ (1.0), hasZoomAnchor_ (false), renderCallCount_ (0) {
 
   mainLayout_= new QVBoxLayout (this);
   mainLayout_->setContentsMargins (0, 0, 0, 0);
@@ -465,30 +470,71 @@ PDFReaderWidget::setRectSelectMode (bool checked) {
   }
   rectSelectDragging_= false;
 
-  if (rectSelectMode_) {
-    if (!hintLabel_) {
-      hintLabel_= new QLabel (contentWidget_);
-      hintLabel_->setObjectName ("rectSelectHint");
-      hintLabel_->setStyleSheet (
-          "QLabel { background-color: rgba(0, 0, 0, 180); color: white; "
-          "padding: 4px 8px; border-radius: 4px; font-size: 12px; }");
-    }
-#ifdef Q_OS_MACOS
-    QString shortcut= "Cmd+Shift+v";
-#else
-    QString shortcut= "Ctrl+Shift+v";
-#endif
-    hintLabel_->setText (
-        QString ("Draw a rectangle and use %1 to magic paste!").arg (shortcut));
-    hintLabel_->adjustSize ();
-    hintLabel_->move (PAGE_MARGIN, PAGE_MARGIN);
-    hintLabel_->show ();
-  }
-  else if (hintLabel_) {
-    hintLabel_->hide ();
-  }
+  if (rectSelectMode_) restoreSelectHint ();
+  else if (hintLabel_) hintLabel_->hide ();
+  hintToastActive_= false;
 
   Q_EMIT rectSelectModeChanged (checked);
+}
+
+/**
+ * @brief 在视口顶部水平居中处显示临时提示（如"已复制到剪贴板"）
+ *
+ * 垂直位置与选区模式提示一致，水平相对视口居中；任何后续用户操作会通过
+ * dismissHintToast 立即清除。
+ */
+void
+PDFReaderWidget::showHintToast (const QString& text) {
+  if (!hintLabel_ || !scrollArea_ || !scrollArea_->viewport ()) return;
+  hintLabel_->setText (text);
+  hintLabel_->adjustSize ();
+  // 垂直位置保持原左上角提示位,仅水平相对视口居中
+  QWidget* vp= scrollArea_->viewport ();
+  QPoint   anchor=
+      QPoint ((vp->width () - hintLabel_->width ()) / 2, PAGE_MARGIN);
+  hintLabel_->move (contentWidget_->mapFrom (vp, anchor));
+  hintLabel_->show ();
+  hintLabel_->raise ();
+  hintToastActive_= true;
+}
+
+/**
+ * @brief 恢复截图选区模式的左上角操作提示
+ */
+void
+PDFReaderWidget::restoreSelectHint () {
+  if (!hintLabel_) {
+    hintLabel_= new QLabel (contentWidget_);
+    hintLabel_->setObjectName ("rectSelectHint");
+    hintLabel_->setStyleSheet (
+        "QLabel { background-color: rgba(0, 0, 0, 180); color: white; "
+        "padding: 4px 8px; border-radius: 4px; font-size: 12px; }");
+  }
+#ifdef Q_OS_MACOS
+  QString shortcut= "Cmd+Shift+v";
+#else
+  QString shortcut= "Ctrl+Shift+v";
+#endif
+  hintLabel_->setText (QString ("Click two corners to select, then use %1 to "
+                                "magic paste!")
+                           .arg (shortcut));
+  hintLabel_->adjustSize ();
+  hintLabel_->move (PAGE_MARGIN, PAGE_MARGIN);
+  hintLabel_->show ();
+  hintToastActive_= false;
+}
+
+/**
+ * @brief 清除居中的临时提示；若仍处于截图选区模式则恢复操作提示
+ */
+void
+PDFReaderWidget::dismissHintToast () {
+  if (!hintToastActive_) return;
+  if (rectSelectMode_) restoreSelectHint ();
+  else if (hintLabel_) {
+    hintLabel_->hide ();
+    hintToastActive_= false;
+  }
 }
 
 void
@@ -514,12 +560,15 @@ PDFReaderWidget::finishRectSelect (const QPoint& viewportPos) {
   QClipboard* clipboard= QApplication::clipboard ();
   if (clipboard) {
     clipboard->setPixmap (selected);
+    // Trigger silent OCR to populate cache; the result is not inserted here.
+    // the_gui 在单元测试等未启动完整 GUI 的场景下为 NULL
+    if (!is_community_stem () && the_gui != NULL) {
+      exec_delayed (scheme_cmd (
+          "(when (defined? 'ocr-recognize-silent) (ocr-recognize-silent))"));
+    }
   }
 
-  if (hintLabel_) {
-    hintLabel_->setText ("Copied to Clipboard!");
-    hintLabel_->adjustSize ();
-  }
+  if (hintLabel_) showHintToast ("Copied to Clipboard!");
 }
 
 QLabel*
@@ -864,6 +913,7 @@ bool
 PDFReaderWidget::loadFromFile (const QString& filePath, int dpi) {
   clear ();
   autoFitApplied_= false;
+  pdfFilePath_   = filePath;
 
   targetDpi_= dpi;
   hasError_ = false;
@@ -964,6 +1014,8 @@ PDFReaderWidget::loadFromFile (const QString& filePath, int dpi) {
   }
 
   extractPageLinks ();
+  extractOutline ();
+  emit outlineLoaded (outlineItems_);
 
   // 创建所有页面 label（先不渲染，由 rebuildPages 统一处理可见性）
   for (int i= 0; i < pageCount_; ++i) {
@@ -988,6 +1040,7 @@ PDFReaderWidget::loadFromFile (const QString& filePath, int dpi) {
 void
 PDFReaderWidget::clear () {
   pdfData_.clear ();
+  pdfFilePath_.clear ();
   pageCount_= 0;
   hasError_ = false;
   errorString_.clear ();
@@ -996,6 +1049,7 @@ PDFReaderWidget::clear () {
   pageAspectRatios_.clear ();
   autoFitApplied_= false;
   clearPageLinks ();
+  outlineItems_.clear ();
   pageCache_.clear ();
 
   QLayoutItem* item;
@@ -1074,6 +1128,67 @@ PDFReaderWidget::extractPageLinks () {
   }
   fz_catch (ctx) {
     qWarning () << "MuPDF link extraction error:" << fz_caught_message (ctx);
+  }
+
+  if (stream) fz_drop_stream (ctx, stream);
+  if (buf) fz_drop_buffer (ctx, buf);
+  if (doc) fz_drop_document (ctx, doc);
+}
+
+namespace {
+void
+walkOutline (fz_context* ctx, fz_document* doc, const fz_outline* node,
+             int level, QVector<PdfOutlineItem>& out) {
+  for (const fz_outline* cur= node; cur; cur= cur->next) {
+    PdfOutlineItem item;
+    item.title= QString::fromUtf8 (cur->title ? cur->title : "");
+    item.page = -1;
+    if (cur->uri) {
+      float       xp= 0, yp= 0;
+      fz_location loc= fz_resolve_link (ctx, doc, cur->uri, &xp, &yp);
+      if (loc.page >= 0) item.page= loc.page;
+    }
+    if (cur->down) {
+      walkOutline (ctx, doc, cur->down, level + 1, item.children);
+    }
+    out.append (item);
+  }
+}
+} // namespace
+
+void
+PDFReaderWidget::extractOutline () {
+  outlineItems_.clear ();
+  if (pdfData_.isEmpty ()) return;
+
+  fz_context* ctx= mupdf_context ();
+  if (!ctx) return;
+
+  fz_document* doc   = nullptr;
+  fz_buffer*   buf   = nullptr;
+  fz_stream*   stream= nullptr;
+
+  fz_var (doc);
+  fz_var (buf);
+  fz_var (stream);
+
+  fz_try (ctx) {
+    buf= fz_new_buffer_from_copied_data (
+        ctx, reinterpret_cast<const unsigned char*> (pdfData_.constData ()),
+        pdfData_.size ());
+    stream= fz_open_buffer (ctx, buf);
+    doc   = fz_open_document_with_stream (ctx, "pdf", stream);
+    if (!doc)
+      fz_throw (ctx, FZ_ERROR_GENERIC, "Failed to open PDF for outline");
+
+    fz_outline* outline= fz_load_outline (ctx, doc);
+    if (outline) {
+      walkOutline (ctx, doc, outline, 0, outlineItems_);
+      fz_drop_outline (ctx, outline);
+    }
+  }
+  fz_catch (ctx) {
+    qWarning () << "MuPDF outline extraction error:" << fz_caught_message (ctx);
   }
 
   if (stream) fz_drop_stream (ctx, stream);
@@ -1349,6 +1464,12 @@ PDFReaderWidget::keyPressEvent (QKeyEvent* event) {
 
 bool
 PDFReaderWidget::event (QEvent* event) {
+  if (hintToastActive_ &&
+      (event->type () == QEvent::Gesture ||
+       event->type () == QEvent::NativeGesture ||
+       event->type () == QEvent::Wheel || event->type () == QEvent::KeyPress)) {
+    dismissHintToast ();
+  }
   if (event->type () == QEvent::Gesture) {
     QGestureEvent* gestureEvent= static_cast<QGestureEvent*> (event);
     if (QPinchGesture* pinch= qobject_cast<QPinchGesture*> (
@@ -1422,6 +1543,13 @@ PDFReaderWidget::event (QEvent* event) {
 bool
 PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
   if (watched == scrollArea_->viewport ()) {
+    // 居中的截图结果提示:任何后续用户操作立即清除
+    if (hintToastActive_ && (event->type () == QEvent::MouseButtonPress ||
+                             event->type () == QEvent::MouseButtonDblClick ||
+                             event->type () == QEvent::Wheel ||
+                             event->type () == QEvent::KeyPress)) {
+      dismissHintToast ();
+    }
     // Pre-compute viewport and content coordinates for mouse events.
     QPoint viewportPos, contentPos;
     bool   isMouseEvent= (event->type () == QEvent::MouseMove ||
@@ -1498,6 +1626,15 @@ PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
       }
     }
     // ============================================================
+    // Context menu (right-click)
+    // ============================================================
+    else if (event->type () == QEvent::ContextMenu) {
+      QContextMenuEvent* contextEvent= static_cast<QContextMenuEvent*> (event);
+      showContextMenu (contextEvent->pos ());
+      contextEvent->accept ();
+      return true;
+    }
+    // ============================================================
     // Link hover detection (no button pressed)
     // ============================================================
     else if (!rectSelectMode_ && !browseDragging_ &&
@@ -1514,7 +1651,7 @@ PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
       if (mouseEvent->button () == Qt::LeftButton) {
         browseDragging_    = true;
         browseDragActive_  = false;
-        browseDragStartPos_= mouseEvent->globalPosition ().toPoint ();
+        browseDragStartPos_= viewportPos;
         scroller_->handleInput (QScroller::InputPress, viewportPos,
                                 mouseEvent->timestamp ());
         scrollArea_->viewport ()->setCursor (Qt::ClosedHandCursor);
@@ -1525,9 +1662,7 @@ PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
     else if (!rectSelectMode_ && browseDragging_ &&
              event->type () == QEvent::MouseMove) {
       QMouseEvent* mouseEvent= static_cast<QMouseEvent*> (event);
-      int          delta=
-          (mouseEvent->globalPosition ().toPoint () - browseDragStartPos_)
-              .manhattanLength ();
+      int delta= (viewportPos - browseDragStartPos_).manhattanLength ();
       if (!browseDragActive_ && delta > QApplication::startDragDistance ()) {
         browseDragActive_= true;
       }
@@ -1565,13 +1700,27 @@ PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
               event->type () == QEvent::MouseButtonDblClick)) {
       QMouseEvent* mouseEvent= static_cast<QMouseEvent*> (event);
       if (mouseEvent->button () == Qt::LeftButton) {
-        rectSelectDragging_= true;
-        rectSelectStart_   = contentPos;
-        if (!rubberBand_) {
-          rubberBand_= new QRubberBand (QRubberBand::Rectangle, contentWidget_);
+        if (rectSelectDragging_) {
+          // 第二次点击:确定第二个点,完成截图;同点重复点击(如双击,QRect
+          // 两点构造宽高至少为 1)不结束选区
+          QRect rect (rectSelectStart_, contentPos);
+          rect= rect.normalized ();
+          if (rect.width () > 1 && rect.height () > 1) {
+            rectSelectDragging_= false;
+            finishRectSelect (mouseEvent->pos ());
+          }
         }
-        rubberBand_->setGeometry (QRect (rectSelectStart_, QSize ()));
-        rubberBand_->show ();
+        else {
+          // 第一次点击:确定第一个点,移动鼠标即可出现选框
+          rectSelectDragging_= true;
+          rectSelectStart_   = contentPos;
+          if (!rubberBand_) {
+            rubberBand_=
+                new QRubberBand (QRubberBand::Rectangle, contentWidget_);
+          }
+          rubberBand_->setGeometry (QRect (rectSelectStart_, QSize ()));
+          rubberBand_->show ();
+        }
         mouseEvent->accept ();
         return true;
       }
@@ -1584,16 +1733,22 @@ PDFReaderWidget::eventFilter (QObject* watched, QEvent* event) {
       static_cast<QMouseEvent*> (event)->accept ();
       return true;
     }
-    else if (rectSelectMode_ && rectSelectDragging_ &&
-             event->type () == QEvent::MouseButtonRelease) {
-      QMouseEvent* mouseEvent= static_cast<QMouseEvent*> (event);
-      if (mouseEvent->button () == Qt::LeftButton) {
-        rectSelectDragging_= false;
-        finishRectSelect (mouseEvent->pos ());
-        mouseEvent->accept ();
-        return true;
-      }
-    }
   }
   return QWidget::eventFilter (watched, event);
+}
+
+void
+PDFReaderWidget::showContextMenu (const QPoint& pos) {
+  if (pdfFilePath_.isEmpty ()) return;
+  QMenu    menu (this);
+  QAction* saveAction= menu.addAction (qt_translate ("Save as..."));
+  QAction* selected  = menu.exec (scrollArea_->viewport ()->mapToGlobal (pos));
+  if (selected == saveAction) {
+    QString dest= QFileDialog::getSaveFileName (
+        this, qt_translate ("Save PDF file"), pdfFilePath_,
+        qt_translate ("PDF files (*.pdf)"));
+    if (!dest.isEmpty ()) {
+      QFile::copy (pdfFilePath_, dest);
+    }
+  }
 }

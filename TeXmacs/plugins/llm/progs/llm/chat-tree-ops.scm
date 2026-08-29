@@ -12,7 +12,7 @@
 
 (texmacs-module (llm chat-tree-ops)
   (:use (utils library tree)
-    (data latex)
+    (latex latex-format)
     (utils edit variants)
     (texmacs texmacs tm-files)
     (utils library cursor)
@@ -218,8 +218,8 @@
                   (let* ((doc (tree-ref body j)) (content (if (tree? text) (tree->stree text) text)))
                     ;; 按 \n 拆分：首段追加到 doc 末尾，后续段落新增
                     (when (and (string? content) (not (string-null? content)))
-                      (let* ((cork-parts (string-split (cork->utf8 content) #\newline))
-                             (parts (map utf8->cork cork-parts))
+                      (let* ((herk-parts (string-split (herk->utf8 content) #\newline))
+                             (parts (map utf8->herk herk-parts))
                             ) ;
                         (when (nnull? parts)
                           ;; 追加第一段到 doc 最后一个子节点
@@ -391,28 +391,4 @@
       ) ;let
     ) ;let*
   ) ;with-buffer
-) ;tm-define
-
-;;; ---------- 样式包管理 ----------
-
-(tm-define (chat-tab-add-default-style-packages! session-name)
-  ;; 偏好驱动，参考 buffer-set-default-style（tm-files.scm:130-146）
-  (add-style-package "number-europe")
-  (add-style-package "preview-ref")
-  (with lan
-    (get-preference "language")
-    (when (!= lan "english")
-      (set-document-language lan)
-      ;; 中文等 CJK 语言自动加载对应样式包
-      (when (== lan "chinese")
-        (add-style-package "chinese")
-        (add-style-package "table-captions-above")
-      ) ;when
-    ) ;when
-  ) ;with
-  ;; 插件样式包：动态检测，参考 session-edit 的 make-session
-  (when (url-exists? (url-unix "$TEXMACS_STYLE_PATH" (string-append session-name ".ts"))
-        ) ;url-exists?
-    (add-style-package session-name)
-  ) ;when
 ) ;tm-define

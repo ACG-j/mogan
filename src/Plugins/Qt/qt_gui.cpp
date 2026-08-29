@@ -27,6 +27,11 @@
 #include "tm_file.hpp"
 #include "tm_window.hpp"
 
+#ifdef LORO_ENABLED
+#include "loro_collab.hpp"
+#endif
+
+#include "qt_chat_tab_widget.hpp" // for QTChatTabWidget::isInitBenchPending
 #include "qt_gui.hpp"
 #include "qt_renderer.hpp" // for the_qt_renderer
 #include "qt_simple_widget.hpp"
@@ -172,10 +177,10 @@ qt_gui_rep::qt_gui_rep (int& argc, char** argv)
 #ifdef MACOSX_EXTENSIONS
     double mac_hidpi= mac_screen_scale_factor ();
     if (DEBUG_STD)
-      debug_boot << "Mac Screen scaleFfactor: " << mac_hidpi << "\n";
+      debug_std << "Mac Screen scaleFfactor: " << mac_hidpi << "\n";
 
     if (mac_hidpi == 2) {
-      if (DEBUG_STD) debug_boot << "Setting up HiDPI mode\n";
+      if (DEBUG_STD) debug_std << "Setting up HiDPI mode\n";
 #if (QT_VERSION < 0x050000)
       retina_factor= 2;
       if (tm_style_sheet == "") retina_scale= 1.4;
@@ -194,8 +199,8 @@ qt_gui_rep::qt_gui_rep (int& argc, char** argv)
     SI w, h;
     get_extents (w, h);
     if (DEBUG_STD)
-      debug_boot << "Screen extents: " << w / PIXEL << " x " << h / PIXEL
-                 << "\n";
+      debug_std << "Screen extents: " << w / PIXEL << " x " << h / PIXEL
+                << "\n";
     if (min (w, h) >= 1440 * PIXEL) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
       if (QGuiApplication::platformName () != "wayland")
@@ -393,6 +398,47 @@ qt_gui_rep::get_selection (string key, tree& t, string& s, string format) {
   return true;
 }
 
+// 解析单个图片在内存中的路径，只处理嵌入式图片
+static url
+selection_image_url (tree t) {
+  // 支持外层套 with 环境（用于对齐等），剥壳后取内层 image 节点
+  while (is_func (t, WITH) && (N (t) & 1) == 1 && N (t) > 2)
+    t= t[N (t) - 1];
+  if (!is_func (t, IMAGE, 5)) return url_none ();
+  tree image_tree= t[0];
+  if (is_atomic (image_tree)) {
+    url im= url_system (image_tree->label);
+    if (is_rooted (im)) return im;
+  }
+  else if (is_func (image_tree, TUPLE, 2) &&
+           is_func (image_tree[0], RAW_DATA, 1) &&
+           is_atomic (image_tree[0][0]) && is_atomic (image_tree[1])) {
+    return url_ramdisc (image_tree[0][0]->label) *
+           url ("image." * image_tree[1]->label);
+  }
+  return url_none ();
+}
+
+static bool
+attach_selection_image (QMimeData* md, tree t) {
+  url src= selection_image_url (t);
+  if (is_none (src)) return false;
+  QImage img;
+  // 直接按原始像素加载：get_image 会按排版用的逻辑尺寸
+  // （HiDPI下为物理像素的一半）缩放，导致画质降低
+  bool loaded= qt_load_image_from_ramdisc (src, img);
+  if (!loaded || img.isNull ()) return false;
+  QImage copy= img.convertToFormat (QImage::Format_ARGB32);
+  md->setImageData (copy);
+  // 外部应用（Word、飞书、网页AIchat等）不认QT私有的
+  // application/x-qt-image，故额外写入标准 image/png
+  QByteArray png;
+  QBuffer    buf (&png);
+  buf.open (QIODevice::WriteOnly);
+  if (copy.save (&buf, "PNG")) md->setData ("image/png", png);
+  return true;
+}
+
 bool
 qt_gui_rep::set_selection (string key, tree t, string s, string sv, string sh,
                            string format) {
@@ -424,6 +470,13 @@ qt_gui_rep::set_selection (string key, tree t, string s, string sv, string sh,
       // tm_delete_array (selection);
 
       selection= c_string (sv);
+
+      // 单图片复制：写入 image/png 供外部粘贴，并跳过 text/plain
+      // （Word 会优先取text/plain 导致粘贴失败）
+      if (is_tuple (t, "texmacs", 3) && attach_selection_image (md, t[1])) {
+        cb->setMimeData (md, mode);
+        return true;
+      }
     }
 
     string enc= get_preference ("texmacs->verbatim:encoding");
@@ -552,6 +605,14 @@ qt_gui_rep::show_wait_indicator (widget w, string message, string arg) {
 
 void (*the_interpose_handler) (void)= NULL;
 
+// 启动开窗钩子：一次性触发，事件循环起跑后的第一个事件里执行
+static std::function<void ()> the_boot_open_hook= [] () {};
+
+void
+gui_set_boot_open_hook (std::function<void ()> f) {
+  the_boot_open_hook= f;
+}
+
 void
 gui_interpose (void (*r) (void)) {
   the_interpose_handler= r;
@@ -562,6 +623,13 @@ qt_gui_rep::event_loop () {
   QCoreApplication* app;
   if (headless_mode) app= QCoreApplication::instance ();
   else app= QApplication::instance ();
+  // 启动开窗钩子在首次 update 前同步执行：事件队列/interpose 依赖
+  // 已存在的 active view，无窗口时处理队列事件会触发 "no active view"
+  if (the_boot_open_hook) {
+    std::function<void ()> hook= the_boot_open_hook;
+    the_boot_open_hook         = [] () {};
+    hook ();
+  }
   update ();
   // need_update();
   app->exec ();
@@ -576,6 +644,10 @@ gui_open (int& argc, char** argv) {
   // start the gui
   // new QApplication (argc,argv); now in texmacs.cpp
   the_gui= tm_new<qt_gui_rep> (argc, argv);
+
+  // 补初始化全局颜色常量（red 等），X11 移除后原调用路径已断
+  // 红十字光标等依赖 red 的绘制会失效，故在此初始化一下
+  initialize_colors ();
 
 #ifdef MACOSX_EXTENSIONS
   mac_begin_remote ();
@@ -608,6 +680,10 @@ void
 gui_close () {
   // cleanly close the gui
   ASSERT (the_gui != NULL, "gui not yet open");
+#ifdef LORO_ENABLED
+  // 关闭协作会话的 WS，避免进程退出时 curl 在半操作中 teardown
+  loro_collab_disconnect ();
+#endif
   tm_delete (the_gui);
   the_gui= NULL;
 
@@ -856,6 +932,13 @@ qt_gui_rep::update () {
   updatetimer->stop ();
   updating= true;
 
+  // chat_init 窗口内的 update 计时：窗口内首次必打，后续 <10ms 不打印。
+  // delayed 命令 + 队列事件 + 重绘全在里面，再细分子段定位
+  bool        bench_chat_init  = QTChatTabWidget::isInitBenchPending ();
+  static bool gui_update_logged= false;
+  if (!bench_chat_init) gui_update_logged= false;
+  if (bench_chat_init) bench_start ("chat_init: gui update");
+
   static int count_events   = 0;
   static int max_proc_events= 40;
 
@@ -884,7 +967,11 @@ qt_gui_rep::update () {
   // 2.
   // Manage delayed commands
 
-  if (delayed_commands.must_wait (now)) process_delayed_commands ();
+  if (delayed_commands.must_wait (now)) {
+    if (bench_chat_init) bench_start ("chat_init: update/delayed");
+    process_delayed_commands ();
+    if (bench_chat_init) bench_end ("chat_init: update/delayed", 10);
+  }
 
   // 3.
   // If there are pending events in the private queue process them until the
@@ -897,7 +984,9 @@ qt_gui_rep::update () {
   }
   else
     while (waiting_events.size () > 0 && count_events < max_proc_events) {
+      if (bench_chat_init) bench_start ("chat_init: update/queued");
       process_queued_events (1);
+      if (bench_chat_init) bench_end ("chat_init: update/queued", 10);
       count_events++;
       // if (the_interpose_handler) the_interpose_handler();
     }
@@ -911,8 +1000,24 @@ qt_gui_rep::update () {
   timeout_time= texmacs_time () + time_credit;
 
   if (!postpone_treatment) {
+    if (bench_chat_init) bench_start ("chat_init: update/interpose");
     if (the_interpose_handler) the_interpose_handler ();
+    if (bench_chat_init) bench_end ("chat_init: update/interpose", 10);
+#ifdef LORO_ENABLED
+    static time_t last_loro_poll_time= 0;
+    if (now - last_loro_poll_time >= 1000 / 6) {
+      loro_collab_poll ();
+      loro_collab_apply ();
+      last_loro_poll_time= now;
+    }
+#endif
+    if (bench_chat_init) bench_start ("chat_init: update/repaint_all");
     qt_simple_widget_rep::repaint_all ();
+    if (bench_chat_init) bench_end ("chat_init: update/repaint_all", 10);
+  }
+  if (bench_chat_init) {
+    bench_end ("chat_init: gui update", gui_update_logged ? 10 : 0);
+    gui_update_logged= true;
   }
 
   if (waiting_events.size () > 0) needing_update= true;

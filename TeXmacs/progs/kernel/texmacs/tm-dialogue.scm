@@ -361,11 +361,12 @@
 ) ;define
 
 (define (recent-files-add recent-files path name)
-  (let-njson ((item (json->njson `((,"path" unquote path)
-                                   (,"name" unquote name)
-                                   (,"last_open" unquote (current-second))
-                                   (,"open_count" unquote 1)
-                                   (,"show" unquote #t))
+  (let-njson ((item (json->njson `((,"path" . ,path)
+                                   (,"name" . ,name)
+                                   (,"last_open"
+                                    . ,(time-second (current-time)))
+                                   (,"open_count" . ,1)
+                                   (,"show" . ,#t))
                     ) ;json->njson
               ) ;item
              ) ;
@@ -383,7 +384,7 @@
   (let* ((count* (njson-ref recent-files "files" idx "open_count"))
          (count* (if (number? count*) count* 0))
         ) ;
-    (njson-set! recent-files "files" idx "last_open" (current-second))
+    (njson-set! recent-files "files" idx "last_open" (time-second (current-time)))
     (njson-set! recent-files "files" idx "open_count" (+ count* 1))
     (njson-set! recent-files "files" idx "show" #t)
     (recent-files-apply-lru recent-files 25)
@@ -472,10 +473,12 @@
   (and-with name (procedure-symbol-name fun) (symbol->string name))
 ) ;define-public
 
-(define (recent-buffer-json file-path)
-  (let* ((name (url->system (url-tail (system->url file-path))))
-         (idx (recent-files-index-by-path interactive-arg-recent-file-json file-path))
-        ) ;
+;; 增加/刷新一条最近文件（显式 name）：命中则 touch（last_open/open_count），
+;; 否则新增并跑 LRU。本地 buffer（name 由 url-tail 推导）与云文档（name 为文档
+;; 显示名）共用——云文档 path 形如 tmfs://collab/<doc_id>，由 collab-record-recent
+;; 写入。原 recent-buffer-json 的 name 推导逻辑保留在此处委托。
+(define-public (recent-files-learn file-path name)
+  (let ((idx (recent-files-index-by-path interactive-arg-recent-file-json file-path)))
     (if idx
       (set! interactive-arg-recent-file-json
         (recent-files-set interactive-arg-recent-file-json idx)
@@ -484,7 +487,19 @@
         (recent-files-add interactive-arg-recent-file-json file-path name)
       ) ;set!
     ) ;if
-  ) ;let*
+  ) ;let
+) ;define-public
+
+;; 按 path 反查已存 name（菜单渲染云文档标题用，云 URL 的 url-tail 是 UUID 非标题）；
+;; 未命中返回 #f，调用方自行回退。
+(define-public (recent-files-get-name file-path)
+  (let ((idx (recent-files-index-by-path interactive-arg-recent-file-json file-path)))
+    (and idx (njson-ref interactive-arg-recent-file-json "files" idx "name"))
+  ) ;let
+) ;define-public
+
+(define (recent-buffer-json file-path)
+  (recent-files-learn file-path (url->system (url-tail (system->url file-path))))
 ) ;define
 
 
@@ -753,6 +768,16 @@
   ) ;njson->file
 ) ;define
 
+;; 立即把最近文件状态落盘（仅 recent-files.json，C++ 启动页直接读该文件取 name）。
+;; recent-files-learn 只更新内存态、默认 on-exit 才 flush；云文档记录后若不立即落盘，
+;; 同会话内启动页读到的 name 会回退为 UUID（doc_id）。join/create 频次低，每次写一次
+;; 小 JSON 可接受，且提升崩溃后的最近列表持久性。
+(define-public (recent-files-save)
+  (njson->file interactive-arg-recent-file-system
+    interactive-arg-recent-file-json
+  ) ;njson->file
+) ;define-public
+
 (define (load-njson-with-fallback file valid? fallback-maker)
   (catch #t
     (lambda ()
@@ -922,11 +947,11 @@
 
 (define (append-recent-file-entry! recent-files path last-open)
   (let* ((name (url->system (url-tail (system->url path))))
-         (item (json->njson `((,"path" unquote path)
-                              (,"name" unquote name)
-                              (,"last_open" unquote last-open)
-                              (,"open_count" unquote 1)
-                              (,"show" unquote #t))
+         (item (json->njson `((,"path" . ,path)
+                              (,"name" . ,name)
+                              (,"last_open" . ,last-open)
+                              (,"open_count" . ,1)
+                              (,"show" . ,#t))
                ) ;json->njson
          ) ;item
         ) ;
@@ -941,7 +966,7 @@
 
 (define (import-legacy-scm-recent-files! legacy-items)
   (let* ((min-open (recent-files-min-last-open interactive-arg-recent-file-json))
-         (base (if (number? min-open) (- min-open 1) (current-second)))
+         (base (if (number? min-open) (- min-open 1) (time-second (current-time))))
         ) ;
     (let loop
       ((items legacy-items) (rank 0) (seen '()))

@@ -33,16 +33,9 @@
 ) ;tm-widget
 
 (tm-widget (select-common-style-widget)
-  (dynamic (select-style-among-widget (list "article"
-                                        "beamer"
-                                        "book"
-                                        "browser"
-                                        "exam"
-                                        "generic"
-                                        "letter"
-                                        "manual"
-                                        "seminar"
-                                        "source"
+  (dynamic (select-style-among-widget (list "article" "beamer" "book" "browser"
+                                        "exam" "generic" "letter" "manual"
+                                        "seminar" "source"
                                       ) ;list
            ) ;select-style-among-widget
   ) ;dynamic
@@ -148,15 +141,14 @@
 
 (tm-define (open-document-paragraph-format-window)
   (:interactive #t)
-  (let* ((old (get-init-table paragraph-parameters))
-         (new (get-init-table paragraph-parameters))
-         (u (current-buffer))
-        ) ;
-    (dialogue-window (paragraph-formatter old new init-multi u #t)
-      noop
-      "Document paragraph format"
-    ) ;dialogue-window
-  ) ;let*
+  ;; 走 QML 对话框（与「格式→段落」同骨架，区别在数据通路）：register-specs 存
+  ;; 'document scope specs，cpp-paragraph-format-dialog 开同一个 QML 对话框。
+  ;; 'document 走 init 通路：get-init 读、init-multi 写文档 initial；基础 tab
+  ;; 隐藏 par-left/par-right；重置走 init-default 恢复默认，Cancel 经快照写回。
+  (with specs
+    (list 'document get-init init-multi)
+    (cpp-paragraph-format-dialog (paragraph-format-register-specs specs))
+  ) ;with
 ) ;tm-define
 
 (tm-define (open-document-paragraph-format)
@@ -252,7 +244,7 @@
   ) ;let
 ) ;define
 
-(define (assign-page-number u pf ps pe nt)
+(define (assign-page-number u ps pe nt)
   (let* ((seed (string->number (initial-get u "pn-next")))
          (next (if (and (integer? seed) (>= seed 1)) seed 1))
          (m-name (pn-name "pn-m" next))
@@ -263,61 +255,133 @@
     (initial-set u "page-first" "1")
     (when (= next 1)
       (initial-set-tree u "pn-g0" '(macro (value "page-nr")))
+      ;; 底层 pn-g0 宏，直接显示 page-nr 宏
     ) ;when
-    (initial-set-tree u m-name (make-pn-m-stree m-name pf))
-    (initial-set-tree u l-name (make-pn-l-stree l-name m-name nt))
+    (if (== nt "blank")
+      (initial-set-tree u l-name '(macro ""))
+      ;; 构建 pn-lx 宏，此时永远不显示页码
+      (begin
+        (initial-set-tree u m-name (make-pn-m-stree m-name ps))
+        ;; 构建 pn-mx 宏，利用 ps 计算当前相对页码
+        (initial-set-tree u l-name (make-pn-l-stree l-name m-name nt))
+        ;; 构建 pn-lx 宏，利用 pn-mx 宏判断：当相对页码小于 1 时不显示，否则按照样式 nt 显示
+      ) ;begin
+    ) ;if
     (initial-set-tree u g-name (make-pn-g-stree g-name prev-g-name l-name ps pe))
+    ;; 构建 pn-gx 宏，若在当前 ps~pe 范围内，则显示 pn-lx 宏，否则 fallback 到下一层 pn-g(x-1) 宏
     (initial-set-tree u "page-the-page" `(macro (,(string->symbol g-name))))
+    ;; 重定向 page-the-page 宏到顶层 pn-gx 宏
     (initial-set u "pn-next" (number->string (+ next 1)))
+    ;; 更新 pn-next 宏，索引更新
     (refresh-window)
   ) ;let*
 ) ;define
 
+;; pn-style-alist (显示文本 . 内部值)；"" 表示未选择，用于防误触
+
+(define pn-style-alist
+  '(("(Please pick one style)" . "")
+    ("1, 2, 3" . "arabic")
+    ("i, ii, iii" . "roman")
+    ("I, II, III" . "Roman")
+    ("hanzi style" . "hanzi")
+    ("(blank page number)" . "blank"))
+) ;define
+;; pn-text-alist 为其反向映射 (内部值 . 显示文本)，供 enum 显示当前项
+
+(define pn-text-alist (map (lambda (p) (cons (cdr p) (car p))) pn-style-alist))
+
+(define (get-pn-mapping u)
+  (let ((total-pages (get-page-count)))
+    (if (<= total-pages 0)
+      '(document)
+      (let loop
+        ((p 0) (res '()))
+        (if (>= p total-pages)
+          `(with ,"font-family"
+             ,"tt"
+             ,"font-base-size"
+             ,"12"
+             ,(cons 'document (reverse res)))
+          (let* ((pn-text (get-page-number-text p))
+                 (pn-show (if (== pn-text "") "o" pn-text))
+                 (line (string-append (number->string (+ p 1)) " -> " pn-show))
+                ) ;
+            (loop (+ p 1) (cons line res))
+          ) ;let*
+        ) ;if
+      ) ;let
+    ) ;if
+  ) ;let
+) ;define
+
 (tm-widget ((page-number-style-editor u) quit)
-  (let* ((pf "")
-         (ps "")
-         (pe "")
-         (nt "arabic")
-         (filled? (lambda (s) (and (string? s) (!= s ""))))
-        ) ;
-    (centered (aligned (item (text "Applying from:") (input (set! ps answer) "string" (list ps) "6em"))
-                (item (text "Applying to:") (input (set! pe answer) "string" (list pe) "6em"))
-                (item (text "First page:") (input (set! pf answer) "string" (list pf) "6em"))
-                (item (text "Number style:")
-                  (enum (set! nt
-                          (cond ((== answer "1, 2, 3") "arabic")
-                                ((== answer "i, ii, iii") "roman")
-                                ((== answer "I, II, III") "Roman")
-                                ((== answer "一, 二, 三") "hanzi")
-                                (else answer)
-                          ) ;cond
-                        ) ;set!
-                    '("1, 2, 3" "i, ii, iii" "I, II, III" "一, 二, 三")
-                    "1, 2, 3"
-                    "10em"
-                  ) ;enum
-                ) ;item
-              ) ;aligned
+  (let* ((range "Whole document") (rfrom "") (rto "") (nt ""))
+    (centered (refreshable "pn-editor"
+                (aligned (item (text "Applying to:")
+                           (enum (begin
+                                   (set! range answer)
+                                   (refresh-now "pn-editor")
+                                 ) ;begin
+                             '("Whole document" "Custom")
+                             range
+                             "10em"
+                           ) ;enum
+                         ) ;item
+                ) ;aligned
+                (when (== range "Custom")
+                  (aligned (item (text "Range:")
+                             (hlist (input (set! rfrom answer) "string" (list rfrom) "2em")
+                               //
+                               //
+                               (text "~")
+                               //
+                               //
+                               (input (set! rto answer) "string" (list rto) "2em")
+                             ) ;hlist
+                           ) ;item
+                  ) ;aligned
+                ) ;when
+                (aligned (item (text "Number style:")
+                           (enum (set! nt (assoc-ref pn-style-alist answer))
+                             (map car pn-style-alist)
+                             (or (assoc-ref pn-text-alist nt) "(Please pick one style)")
+                             "10em"
+                           ) ;enum
+                         ) ;item
+                  (item (text "Page mapping:")
+                    (resize "5em"
+                      "10em"
+                      (scrollable (texmacs-output (get-pn-mapping u) '(style "generic")))
+                    ) ;resize
+                  ) ;item
+                ) ;aligned
+              ) ;refreshable
     ) ;centered
     ======
     (explicit-buttons (hlist >>>
+                       ("Refresh" (refresh-now "pn-editor"))
+                       //
+                       //
                        ("Cancel" (quit))
                        //
                        //
-                       ("Ok"
-                         (when (and (filled? pf) (filled? ps) (filled? pe) (filled? nt))
-                           (assign-page-number u pf ps pe nt)
-                           (quit)
-                         ) ;when
+                       ("Apply"
+                         (let* ((ps (if (== range "Whole document") "1" rfrom))
+                                (pe (if (== range "Whole document") '(page-the-total) rto))
+                                (filled? (lambda (s) (or (pair? s) (!= s ""))))
+                               ) ;
+                           (when (and (filled? ps) (filled? pe) (filled? nt))
+                             (assign-page-number u ps pe nt)
+                             (set! nt "")
+                             (delayed (:pause 100) (refresh-now "pn-editor"))
+                           ) ;when
+                         ) ;let*
                        ) ;
                       ) ;hlist
     ) ;explicit-buttons
   ) ;let*
 ) ;tm-widget
-
-(define (open-page-number-style-window u)
-  (dialogue-window (page-number-style-editor u) noop "Page number style layer")
-) ;define
 
 (tm-define (set-page-number-style-window-state opened?)
   (set-auxiliary-widget-state opened? 'page-number-style)
@@ -417,15 +481,9 @@
   ======
   (explicit-buttons (hlist >>>
                      ("Reset"
-                       (initial-default u
-                         "page-medium"
-                         "page-type"
-                         "page-orientation"
-                         "page-border"
-                         "page-packet"
-                         "page-offset"
-                         "page-width"
-                         "page-height"
+                       (initial-default u "page-medium" "page-type"
+                         "page-orientation" "page-border" "page-packet"
+                         "page-offset" "page-width" "page-height"
                          "page-crop-marks"
                        ) ;initial-default
                        (refresh-now "page-format-settings")
@@ -620,21 +678,11 @@
   ======
   (explicit-buttons (hlist >>>
                      ("Reset"
-                       (initial-default u
-                         "page-odd"
-                         "page-even"
-                         "page-right"
-                         "page-top"
-                         "page-bot"
-                         "par-width"
-                         "page-odd-shift"
-                         "page-even-shift"
-                         "page-screen-left"
-                         "page-screen-right"
-                         "page-screen-top"
-                         "page-screen-bot"
-                         "page-width-margin"
-                         "page-screen-margin"
+                       (initial-default u "page-odd" "page-even" "page-right"
+                         "page-top" "page-bot" "par-width" "page-odd-shift"
+                         "page-even-shift" "page-screen-left"
+                         "page-screen-right" "page-screen-top" "page-screen-bot"
+                         "page-width-margin" "page-screen-margin"
                        ) ;initial-default
                        (refresh-now "page-margin-toggles")
                        (refresh-now "page-margin-settings")
@@ -794,22 +842,12 @@
   ======
   (explicit-buttons (hlist >>>
                      ("Reset"
-                       (initial-default u
-                         "tex-odd-side-margin"
-                         "tex-even-side-margin"
-                         "tex-text-width"
-                         "tex-line-width"
-                         "tex-column-width"
-                         "tex-top-margin"
-                         "tex-head-height"
-                         "tex-head-sep"
-                         "tex-text-height"
-                         "tex-foot-skip"
-                         "page-screen-left"
-                         "page-screen-right"
-                         "page-screen-top"
-                         "page-screen-bot"
-                         "page-width-margin"
+                       (initial-default u "tex-odd-side-margin"
+                         "tex-even-side-margin" "tex-text-width"
+                         "tex-line-width" "tex-column-width" "tex-top-margin"
+                         "tex-head-height" "tex-head-sep" "tex-text-height"
+                         "tex-foot-skip" "page-screen-left" "page-screen-right"
+                         "page-screen-top" "page-screen-bot" "page-width-margin"
                          "page-screen-margin"
                        ) ;initial-default
                        (refresh-now "page-margin-toggles")
@@ -839,9 +877,7 @@
                      ) ;item
               (item (text "Allowed page height reduction:")
                 (enum (initial-set u "page-shrink" answer)
-                  (cons-new (initial-get u "page-shrink") '("0cm"
-                                                            "0.5cm"
-                                                            "1cm"
+                  (cons-new (initial-get u "page-shrink") '("0cm" "0.5cm" "1cm"
                                                             ""))
                   (initial-get u "page-shrink")
                   "10em"
@@ -849,9 +885,7 @@
               ) ;item
               (item (text "Allowed page height extension:")
                 (enum (initial-set u "page-extend" answer)
-                  (cons-new (initial-get u "page-extend") '("0cm"
-                                                            "0.5cm"
-                                                            "1cm"
+                  (cons-new (initial-get u "page-extend") '("0cm" "0.5cm" "1cm"
                                                             ""))
                   (initial-get u "page-extend")
                   "10em"
@@ -859,12 +893,9 @@
               ) ;item
               (item (text "Vertical space stretchability:")
                 (enum (initial-set u "page-flexibility" answer)
-                  (cons-new (initial-get u "page-flexibility") '("0"
-                                                                 "0.25"
-                                                                 "0.5"
-                                                                 "0.75"
-                                                                 "1"
-                                                                 ""))
+                  (cons-new (initial-get u "page-flexibility") '("0" "0.25"
+                                                                 "0.5" "0.75"
+                                                                 "1" ""))
                   (initial-get u "page-flexibility")
                   "10em"
                 ) ;enum
@@ -876,11 +907,8 @@
   ===
   (explicit-buttons (hlist >>>
                      ("Reset"
-                       (initial-default u
-                         "page-breaking"
-                         "page-shrink"
-                         "page-extend"
-                         "page-flexibility"
+                       (initial-default u "page-breaking" "page-shrink"
+                         "page-extend" "page-flexibility"
                        ) ;initial-default
                        (refresh-now "page-breaking-settings")
                      ) ;

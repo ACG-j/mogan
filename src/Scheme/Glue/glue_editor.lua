@@ -11,8 +11,18 @@
 
 function main()
     return {
+        group_name = "glue_editor",
         binding_object = "get_current_editor()->",
         initializer_name = "initialize_glue_editor",
+        standalone = true,
+        includes = {
+            "object_l1.hpp",
+            "object_l2.hpp",
+            "object_l3.hpp",
+            "object_l5.hpp",
+            "scheme.hpp",
+            "glue_l5_extra.hpp",
+        },
         glues = {
             -- important paths and trees
             {
@@ -53,7 +63,7 @@ function main()
             
             -- low-level modification routines
             {
-                scm_name = "path-exists?",
+                scm_name = "stem-path-exists?",
                 cpp_name = "test_subtree",
                 ret_type = "bool",
                 arg_list = {
@@ -380,6 +390,14 @@ function main()
                 }
             },
             {
+                scm_name = "physical-font-for-string",
+                cpp_name = "physical_font_for_string",
+                ret_type = "string",
+                arg_list = {
+                    "string"
+                }
+            },
+            {
                 scm_name = "get-env-tree",
                 cpp_name = "get_env_value",
                 ret_type = "tree",
@@ -440,6 +458,14 @@ function main()
                 scm_name = "get-page-count",
                 cpp_name = "get_page_count",
                 ret_type = "int"
+            },
+            {
+                scm_name = "get-page-number-text",
+                cpp_name = "get_page_number_text",
+                ret_type = "string",
+                arg_list = {
+                    "int"
+                }
             },
             {
                 scm_name = "get-page-width",
@@ -1084,6 +1110,36 @@ function main()
             {
                 scm_name = "source-complete-try",
                 cpp_name = "source_complete_try",
+                ret_type = "void"
+            },
+            {
+                scm_name = "show-ghost-popup",
+                cpp_name = "show_ghost_popup",
+                ret_type = "void"
+            },
+            {
+                scm_name = "hide-ghost-popup",
+                cpp_name = "hide_ghost_popup",
+                ret_type = "void"
+            },
+            {
+                scm_name = "is-pre-editing",
+                cpp_name = "is_pre_editing",
+                ret_type = "bool"
+            },
+            {
+                scm_name = "interrupt-shortcut",
+                cpp_name = "interrupt_shortcut",
+                ret_type = "void"
+            },
+            {
+                scm_name = "show-diff-popup",
+                cpp_name = "show_diff_popup",
+                ret_type = "void"
+            },
+            {
+                scm_name = "hide-diff-popup",
+                cpp_name = "hide_diff_popup",
                 ret_type = "void"
             },
             {
@@ -1935,6 +1991,11 @@ function main()
                 ret_type = "void"
             },
             {
+                scm_name = "invalidate-visible",
+                cpp_name = "invalidate_visible",
+                ret_type = "void"
+            },
+            {
                 scm_name = "update-forced",
                 cpp_name = "typeset_forced",
                 ret_type = "void"
@@ -2169,9 +2230,12 @@ function main()
                 ret_type = "void"
             },
             {
-                scm_name = "update-menus",
+                scm_name = "menu-update-mask",
                 cpp_name = "update_menus",
-                ret_type = "void"
+                ret_type = "void",
+                arg_list = {
+                    "int"
+                }
             },
             
             {
@@ -2209,7 +2273,17 @@ function main()
                 cpp_name = "edit_special",
                 ret_type = "void"
             },
-        
+            {
+                -- 协作会话：置位当前编辑器的协作开关（loro_collab 在会话就绪时调用）
+                scm_name = "collab-enable",
+                cpp_name = "collab_enable",
+                ret_type = "void"
+            },
+            {
+                scm_name = "collab-enabled?",
+                cpp_name = "collab_enabled",
+                ret_type = "bool"
+            },
         }
     }
 end

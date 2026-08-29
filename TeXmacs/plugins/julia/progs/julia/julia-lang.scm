@@ -1,0 +1,144 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; MODULE      : julia-lang.scm
+;; DESCRIPTION : Julia Language
+;; COPYRIGHT   : (C) 2021 Jeroen Wouters
+;; COPYRIGHT   : (C) 2026 AcceleratorX
+;;
+;; This software falls under the GNU general public license version 3 or later.
+;; It comes WITHOUT ANY WARRANTY WHATSOEVER. For details, see the file LICENSE
+;; in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; https://docs.julialang.org/en/v1/base/base/#Keywords
+
+
+(texmacs-module (julia julia-lang) (:use (prog default-lang)))
+
+(tm-define (parser-feature lan key)
+  (:require (and (== lan "julia") (== key "keyword")))
+  `(,(string->symbol key)
+    (constant "true" "false" "nothing" "missing" "undef" "im" "NaN" "Inf" "pi"
+      "ℯ")
+    (constant_type "Any" "Nothing" "Missing" "Bool" "Char" "String" "Symbol"
+      "Int" "Int8" "Int16" "Int32" "Int64" "Int128" "UInt" "UInt8" "UInt16"
+      "UInt32" "UInt64" "UInt128" "Float16" "Float32" "Float64" "Complex"
+      "Rational" "BigInt" "BigFloat" "Signed" "Unsigned" "AbstractIrrational"
+      "Array" "Vector" "Matrix" "Dict" "Set" "Tuple" "NamedTuple" "Pair"
+      "SubString" "Regex" "AbstractRange" "UnitRange" "StepRange" "LinRange"
+      "AbstractSet" "Type" "Function" "Module" "Number" "Real" "Integer"
+      "AbstractFloat" "AbstractArray" "AbstractVector" "AbstractMatrix"
+      "AbstractDict" "AbstractString" "AbstractChar" "Val" "Vararg" "Union"
+      "UnionAll" "Some" "Exception")
+    (declare_function "function" "do")
+    (declare_module "import" "using" "module" "baremodule" "export" "public")
+    (declare_type "struct" "abstract type" "mutable struct" "primitive type")
+    (keyword "let" "local" "global" "const" "end" "macro" "quote" "in" "isa"
+      "where" "outer" "as")
+    (keyword_conditional "break" "continue" "elseif" "else" "for" "if" "while")
+    (keyword_control "begin" "try" "catch" "return" "finally"))
+) ;tm-define
+
+
+;; https://docs.julialang.org/en/v1/manual/mathematical-operations/
+;; arithm. operators: +, -, *, /, ÷, \, ^, %
+;; boolean operators: !, &&, ||
+;; bitwise operators: ~, &, |, ⊻, ⊼, ⊽, >>>, >>, <<
+;; updating operators: +=  -=  *=  /=  //=  \=  ÷=  %=  ^=  &=  |=  ⊻=  >>>=  >>=  <<=
+;; dot operators: . before operator
+;; numeric comparison: ==, !=, ≠, ===, !==, ≡, ≢, <, <=, ≤, >, >=, ≥
+;; approximate comparison: ≈, ≉
+;; membership: ∈, ∉, ∋, ∌
+;; roots: √, ∛, ∜
+;; adjoint (suffix): '
+
+;; https://docs.julialang.org/en/v1/base/punctuation/
+;; string and expression interpolation (prefix): $
+;; macro (prefix): @
+;; pipe operators: <|, |>
+;; subtype / supertype operators: <:, >:
+;; rational division: //
+;; function composition: ∘
+;; splat operator: ...
+;; type annotation / assert: ::
+;; dictionary pair: =>
+;; anonymous function: ->
+;; ternary conditional: ?
+;; broadcasted in-place assignment: .=
+
+(tm-define (parser-feature lan key)
+  (:require (and (== lan "julia") (== key "operator")))
+  `(,(string->symbol key)
+    (operator "+" "-" "*" "/" "÷" "\\" "^" "%" "!" "&&" "||" "~" "&" "|" "⊻"
+      "⊼" "⊽" ">>>" ">>" "<<" "+=" "-=" "*=" "/=" "\\=" "÷=" "%=" "^=" "&="
+      "|=" "⊻=" ">>>=" ">>=" "<<=" "==" "!=" "≠" "===" "!==" "≡" "≢" "<"
+      "<=" "≤" ">" ">=" "≥" "√" "∛" "∜" "≈" "≉" "∈" "∉" "∋"
+      "∌" "<:" ">:" "<|" "|>" "∘" "..." "::" "=>" "->" "?" ".=" "//" "//=")
+    (operator_special ":")
+    (operator_decoration "@" "$")
+    (operator_field ".")
+    (operator_openclose "{" "[" "(" ")" "]" "}"))
+) ;tm-define
+
+;; https://docs.julialang.org/en/v1/manual/complex-and-rational-numbers/#Rational-Numbers
+
+(define (julia-number-suffix)
+  '(suffix (imaginary "im"))
+) ;define
+
+;; https://docs.julialang.org/en/v1/manual/integers-and-floating-point-numbers/
+(tm-define (parser-feature lan key)
+  (:require (and (== lan "julia") (== key "number")))
+  `(,(string->symbol key)
+    (bool_features "prefix_0x" "prefix_0b" "prefix_0o" "no_suffix_with_box"
+      "sci_notation")
+    ,(julia-number-suffix)
+    (separator "_"))
+) ;tm-define
+
+(tm-define (parser-feature lan key)
+  (:require (and (== lan "julia") (== key "string")))
+  `(,(string->symbol key)
+    (bool_features "hex_with_8_bits" "hex_with_16_bits" "hex_with_32_bits"
+      "octal_upto_3_digits")
+    (escape_sequences "\\" "\"" "'" "a" "b" "f" "n" "r" "t" "v" "newline")
+    (pairs "\"" "\"\"\""))
+) ;tm-define
+
+;; Julia also supports nestable multiline comments (#= ... =#), but the current
+;; Mogan comment parser only handles single-line inline comments.
+
+(tm-define (parser-feature lan key)
+  (:require (and (== lan "julia") (== key "comment")))
+  `(,(string->symbol key) (inline "#"))
+) ;tm-define
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Preferences for syntax highlighting
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (notify-julia-syntax var val)
+  (syntax-read-preferences "julia")
+) ;define
+
+(define-preferences ("syntax:julia:none" "red" notify-julia-syntax)
+ ("syntax:julia:comment" "brown" notify-julia-syntax)
+ ("syntax:julia:error" "dark red" notify-julia-syntax)
+ ("syntax:julia:constant" "#4040c0" notify-julia-syntax)
+ ("syntax:julia:constant_type" "#4040c0" notify-julia-syntax)
+ ("syntax:julia:constant_number" "#4040c0" notify-julia-syntax)
+ ("syntax:julia:constant_string" "dark grey" notify-julia-syntax)
+ ("syntax:julia:constant_char" "#333333" notify-julia-syntax)
+ ("syntax:julia:declare_function" "#0000c0" notify-julia-syntax)
+ ("syntax:julia:declare_module" "#0000c0" notify-julia-syntax)
+ ("syntax:julia:declare_type" "#0000c0" notify-julia-syntax)
+ ("syntax:julia:operator" "#8b008b" notify-julia-syntax)
+ ("syntax:julia:operator_openclose" "#B02020" notify-julia-syntax)
+ ("syntax:julia:operator_field" "#888888" notify-julia-syntax)
+ ("syntax:julia:operator_special" "orange" notify-julia-syntax)
+ ("syntax:julia:keyword" "#309090" notify-julia-syntax)
+ ("syntax:julia:keyword_conditional" "#309090" notify-julia-syntax)
+ ("syntax:julia:keyword_control" "#309090" notify-julia-syntax)
+) ;define-preferences

@@ -12,17 +12,19 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (texmacs-module (dynamic scripts-kbd)
-  (:use (math math-kbd)
-	(dynamic scripts-edit)))
+  (:use (math math-kbd) (dynamic scripts-edit))
+) ;texmacs-module
+(debug-message "keyboard" "(dynamic scripts-kbd): registering kbd-map ...\n")
 
-(kbd-map
-  ("script *" (make 'script-eval))
-  ("script !" (make-script-input))
-  ("script =" (toggle-keep-input))
-  ("script $" (toggle-eval-math))
-  ("script l" (insert-go-to '(converter-eval "latex" "") '(1 0)))
-  ("script L" (insert-go-to '(converter-input "latex" "" "") '(1 0)))
-  ("script h" (insert-go-to '(converter-eval "html" "") '(1 0)))
-  ("script H" (insert-go-to '(converter-input "html" "" "") '(1 0)))
-  ("std \\" (insert-go-to '(converter-eval "latex" "") '(1 0)))
-  ("std \\ var" (insert-go-to '(converter-input "latex" "" "") '(1 0))))
+(kbd-map ("script *" (make 'script-eval))
+ ("script !" (make-script-input))
+ ("script =" (toggle-keep-input))
+ ("script $" (toggle-eval-math))
+ ("script l" (insert-go-to '(converter-eval "latex" "") '(1 0)))
+ ("script L" (insert-go-to '(converter-input "latex" "" "") '(1 0)))
+ ("script h" (insert-go-to '(converter-eval "html" "") '(1 0)))
+ ("script H" (insert-go-to '(converter-input "html" "" "") '(1 0)))
+ ("std \\" (insert-go-to '(converter-eval "latex" "") '(1 0)))
+ ("std \\ var" (insert-go-to '(converter-input "latex" "" "") '(1 0)))
+) ;kbd-map
+(debug-message "keyboard" "(dynamic scripts-kbd): kbd-map registered\n")

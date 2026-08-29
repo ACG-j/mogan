@@ -1,0 +1,566 @@
+/******************************************************************************
+ * MODULE     : loro_collab.cpp
+ * AUTHOR     : Jim Zhou
+ *******************************************************************************
+ * This software falls under the GNU general public license version 3 or later.
+ * It comes with NO WARRANTY WHATSOEVER. For details, see the file LICENSE
+ * in the root directory or <http://www.gnu.org/licenses/gpl-3.0.html>.
+ ******************************************************************************/
+
+#include "editor.hpp"
+#include "loro_collab_ws.hpp"
+#include "new_view.hpp"
+#include "server.hpp"
+#include "sys_utils.hpp"
+#include "tm_buffer.hpp"
+#include "tm_timer.hpp"
+#include "url.hpp"
+#include <cstdint>
+#include <lolly/data/cork.hpp>
+
+void (*g_loro_broadcast_update) (string bytes)= nullptr;
+void (*g_loro_cursor_flush) ()                = nullptr;
+collab_session_manager g_session_manager;
+
+void
+broadcast_to_server (string bytes) {
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  if (session) {
+    session->broadcast (bytes);
+    // 编辑后强制补发光标（force=true），使之与编辑同帧到达对端。
+    session->flush_cursor (true);
+  }
+}
+
+// 多光标：编辑器侧 collab_cursor_moved_hook 经此触发「当前 buffer 的会话」
+// 节流上行（≥50ms）。节流挡下时由 flush_cursor 置 cursor_dirty，poll() 补发，
+// 保证选区最终状态一定送达对端。
+void
+flush_current_cursor () {
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  if (session) session->flush_cursor (false);
+}
+
+// -----------------------------------------------------------------------------
+// collab_session
+// -----------------------------------------------------------------------------
+
+collab_session::collab_session (url buf_url) : buffer_url (buf_url) {
+  // 会话级 peer id：可由 MOGAN_LORO_PEER
+  // 强制（便于调试/指定颜色），否则随机生成。
+  string env= get_env ("MOGAN_LORO_PEER");
+  if (env != "") peer_id= env;
+  else {
+    static int counter= 0;
+    int seed= (int) texmacs_time () ^ (++counter) ^ (int) (intptr_t) this;
+    peer_id = "p" * as_string (seed);
+  }
+}
+
+collab_session::~collab_session () { disconnect (); }
+
+void
+collab_session::enter_idle () {
+  state= collab_state::idle;
+}
+
+void
+collab_session::enter_connecting () {
+  state= collab_state::connecting;
+}
+
+void
+collab_session::enter_await_doc () {
+  state= collab_state::await_doc;
+}
+
+void
+collab_session::enter_await_frame () {
+  state            = collab_state::await_frame;
+  await_frame_since= texmacs_time ();
+}
+
+void
+collab_session::enter_ready () {
+  state            = collab_state::ready;
+  reconnect_attempt= 0;
+}
+
+void
+collab_session::enter_reconnecting () {
+  state= collab_state::reconnecting;
+}
+
+void
+collab_session::set_message (string left) {
+  get_server ()->set_message (tree (left), tree ("Collaborative"));
+}
+
+time_t
+collab_session::reconnect_backoff (int attempt) {
+  if (attempt <= 0) return 0;
+  time_t ms= 1000L << (attempt - 1);
+  if (ms <= 0 || ms > 30000L) ms= 30000L;
+  return ms;
+}
+
+void
+collab_session::schedule_reconnect () {
+  time_t wait= reconnect_backoff (reconnect_attempt);
+  enter_reconnecting ();
+  next_reconnect_at= texmacs_time () + wait;
+  reconnect_attempt++;
+  if (DEBUG_LORO)
+    debug_loro << "调度重连：第 " << reconnect_attempt << " 次，" << wait
+               << "ms 后\n";
+  set_message ("Connection lost; reconnecting… (attempt " *
+               as_string (reconnect_attempt) * ")");
+}
+
+editor
+collab_session::get_editor () const {
+  array<url> views= buffer_to_views (buffer_url);
+  if (N (views) == 0) return nullptr;
+  return view_to_editor (views[0]);
+}
+
+void
+collab_session::become_ready () {
+  bool was_reconnect= (reconnect_attempt > 0);
+  enter_ready ();
+  buffer_known           = true;
+  g_loro_broadcast_update= broadcast_to_server;
+  g_loro_cursor_flush    = flush_current_cursor;
+
+  // CREATE 模式：把占位 URL 换成服务端分配的 doc_id URL。先改名 buffer 再更新
+  // session 的 buffer_url，保证改名后 poll/get_editor/find_by_buffer 用新 URL
+  // 匹配（否则 poll 会误判 buffer 已关闭而断开会话；从「最近」重开也会因 URL
+  // 不匹配而另开 buffer）。join 模式建 buffer 时已是最终 URL，old==new 跳过；
+  // CREATE 重连时首次已改名，old==new 亦跳过。
+  if (want_create () && N (doc_id) > 0) {
+    url old_url= buffer_url;
+    url new_url= url ("tmfs://collab/" * doc_id);
+    if (!(new_url == old_url)) {
+      rename_buffer (old_url, new_url);
+      buffer_url= new_url;
+    }
+  }
+
+  editor ed= get_editor ();
+  if (is_nil (ed)) {
+    std_error << "become_ready: 当前编辑器为空！\n";
+  }
+  else {
+    ed->collab_enable ();
+    // CREATE 模式：会话就绪即 seed 当前 buffer（含已加载文件内容）并广播全量，
+    // 使「打开/上传本地 tmu
+    // 文件为共享文档」无需等待首次编辑即把内容推到服务端。 空文档 seed
+    // 无副作用（仅多一次空全量广播，与延迟 seed 行为等价）。
+    if (want_create ()) ed->ensure_loro_seeded ();
+  }
+
+  if (N (pending_updates) > 0) {
+    if (DEBUG_LORO)
+      debug_loro << "重连后 flush " << N (pending_updates)
+                 << " 条缓冲 update\n";
+    for (int i= 0; i < N (pending_updates); i++)
+      ws->send (pending_updates[i], true);
+    pending_updates= array<string> ();
+  }
+
+  // doc_name 是 UTF-8（scheme 入口 cork->utf8 后传入）；WS 传输（on_connect 的
+  // CREATE 帧）直接用 UTF-8。但 buffer 标题与 footer 消息走显示层，期望 Cork
+  // 编码（CJK 以 <#XXXX> 表示、渲染时还原），故 title 转 Cork 再用于显示。
+  string title=
+      lolly::data::utf8_to_cork ((N (doc_name) > 0) ? doc_name : doc_id);
+  set_title_buffer (buffer_url, title);
+  set_message (was_reconnect ? "Reconnected to " * title
+                             : "Session ready: " * title);
+  if (DEBUG_LORO)
+    debug_loro << "会话就绪 doc=" << doc_id << " name=" << doc_name << "\n";
+}
+
+void
+collab_session::maybe_reconnect () {
+  if (state != collab_state::reconnecting) return;
+  if (texmacs_time () < next_reconnect_at) return;
+  if (ws) {
+    ws->disconnect ();
+    ws.reset ();
+  }
+  if (DEBUG_LORO) debug_loro << "尝试重连 " << server_url << "\n";
+  set_message ("Reconnecting… (attempt " * as_string (reconnect_attempt) * ")");
+
+  ws= std::unique_ptr<tm_websocket_client> (create_collab_ws_client (this));
+  enter_connecting ();
+  ws->connect (server_url);
+}
+
+void
+collab_session::create (string url_str, string name) {
+  disconnect ();
+  mode             = collab_mode::create;
+  doc_id           = "";
+  doc_name         = name;
+  server_url       = url_str;
+  reconnect_attempt= 0;
+  want_reconnect   = true;
+
+  ws= std::unique_ptr<tm_websocket_client> (create_collab_ws_client (this));
+  enter_connecting ();
+  ws->connect (server_url);
+}
+
+void
+collab_session::join (string url_str, string id, string name) {
+  disconnect ();
+  mode             = collab_mode::join;
+  doc_id           = id;
+  doc_name         = name;
+  server_url       = url_str;
+  reconnect_attempt= 0;
+  want_reconnect   = true;
+
+  ws= std::unique_ptr<tm_websocket_client> (create_collab_ws_client (this));
+  enter_connecting ();
+  ws->connect (server_url);
+}
+
+void
+collab_session::disconnect () {
+  want_reconnect= false;
+  enter_idle ();
+  doc_id                  = "";
+  doc_name                = "";
+  reconnect_attempt       = 0;
+  buffer_known            = false;
+  pending_updates         = array<string> ();
+  last_sent_cursor_payload= "";
+  cursor_dirty            = false;
+  if (ws) {
+    ws->disconnect ();
+    ws.reset ();
+  }
+  // 会话回到 idle 后 loro-collab-active? 变 false，菜单需随之恢复为
+  // New/Join 形态。join()/create() 开头也会调本函数清旧会话，此时新会话
+  // 尚未 ready，谓词同样应为 false，通知语义一致。
+  editor ed= get_current_editor ();
+  if (!is_nil (ed)) ed->notify_change (THE_MENUS);
+}
+
+void
+collab_session::poll () {
+  if (ws) ws->poll ();
+  if (state != collab_state::idle && buffer_known &&
+      is_nil (concrete_buffer (buffer_url))) {
+    if (DEBUG_LORO) debug_loro << "协作 buffer 已关闭，断开会话\n";
+    disconnect ();
+    // We do not remove it from manager here, let the manager handle it or just
+    // keep it idle
+    return;
+  }
+  // 兜底：仅在服务端不发 SYNC-END（旧版本）或连接静默失效时触发。
+  // 正常路径下 SYNC-END / 首条历史帧会在毫秒级到达，此分支不应命中。
+  if (state == collab_state::await_frame && await_frame_since > 0 &&
+      texmacs_time () - await_frame_since >= 10000) {
+    std_error << "JOIN 长时间未收到 SYNC-END/历史帧，按空文档就绪（兜底）\n";
+    await_frame_since= 0;
+    become_ready ();
+  }
+  // 节流补发：上次光标/选区变化被节流挡下后，poll 时补发最终状态。
+  // poll 经 loro_collab_poll() 在每个 GUI
+  // 事件周期调用，故补发最多滞后一个重绘周期。
+  if (state == collab_state::ready && cursor_dirty) flush_cursor (false);
+  maybe_reconnect ();
+}
+
+void
+collab_session::broadcast (string bytes) {
+  if (state == collab_state::ready && ws && ws->connected ()) {
+    if (DEBUG_LORO) debug_loro << "上行 " << N (bytes) << " 字节 update\n";
+    ws->send (bytes, true);
+    return;
+  }
+  if (want_reconnect) {
+    pending_updates << bytes;
+    if (DEBUG_LORO)
+      debug_loro << "缓冲本地 update（" << N (bytes)
+                 << " 字节），待重连后上行\n";
+  }
+}
+
+// 多光标：发文本帧 "CURSOR <peer> <payload>"。光标瞬态，仅在 ready 且已连接时
+// 发送，断线不缓冲（丢失即丢弃，下个节流周期自然补发）。
+void
+collab_session::send_cursor (string payload) {
+  if (state == collab_state::ready && ws && ws->connected ())
+    ws->send (payload, false);
+}
+
+// 发送本端光标。force=true（编辑后）总是发；force=false（光标移动/选区变化）
+// 按 >= 1000 / 6 ms 节流并按 payload 去重（避免光标闪烁重绘触发无意义上行）。
+// 节流挡下时不丢弃，置 cursor_dirty 待 poll() 补发，保证选区
+// 最终状态一定送达（拖动/取消选区时同一帧内 go_to 先发旧选区、set_selection
+// 被节流丢弃，若无补发则选区永久滞后或停在旧高亮）。
+void
+collab_session::flush_cursor (bool force) {
+  if (state != collab_state::ready) return;
+  if (!force && texmacs_time () - last_cursor_send < 1000 / 6) {
+    cursor_dirty= true; // 节流：标记待发，不丢弃
+    return;
+  }
+  editor ed= get_editor ();
+  if (!is_nil (ed)) {
+    string payload= ed->collab_cursor_payload ();
+    if (payload != "") {
+      if (force || payload != last_sent_cursor_payload) {
+        send_cursor ("CURSOR " * peer_id * " " * payload);
+        last_sent_cursor_payload= payload;
+      }
+    }
+  }
+  last_cursor_send= texmacs_time ();
+  cursor_dirty    = false; // 已尝试发（含空 payload），清除脏标记
+}
+
+void
+collab_session::apply_queued_remote () {
+  editor ed= get_editor ();
+  if (!is_nil (ed)) ed->apply_queued_remote ();
+}
+
+void
+collab_session::on_connect () {
+  if (DEBUG_LORO) debug_loro << "已连接服务端 " << server_url << "\n";
+  enter_await_doc ();
+  if (N (doc_id) > 0) ws->send ("JOIN " * doc_id, false);
+  else if (N (doc_name) > 0) ws->send ("CREATE " * doc_name, false);
+  else ws->send ("CREATE", false);
+}
+
+void
+collab_session::on_message (string data, bool is_binary) {
+  if (!is_binary) {
+    if (starts (data, "DOC ")) {
+      // "DOC <docId>" 或 "DOC <docId> <name>"：name 取首个空格后全部
+      // （服务端已 trim，可含空格/CJK；无名文档无此段）
+      string rest= data (4, N (data));
+      int    sp  = search_forwards (" ", rest);
+      if (sp >= 0) {
+        doc_id  = rest (0, sp);
+        doc_name= rest (sp + 1, N (rest));
+      }
+      else doc_id= rest;
+      if (DEBUG_LORO)
+        debug_loro << "服务端确认文档 " << doc_id
+                   << "（mode=" << (want_create () ? "create" : "join")
+                   << "）\n";
+      if (want_create ()) become_ready ();
+      else {
+        enter_await_frame ();
+      }
+    }
+    else if (starts (data, "ERR ")) {
+      std_error << "服务端错误: " << data << "\n";
+      want_reconnect= false;
+      enter_idle ();
+      set_message (data * " — stopped reconnecting");
+    }
+    else if (starts (data, "CURSOR ")) {
+      // "CURSOR <peer>
+      // <payload>"：peer=首空格前，payload=其后（含空格，不透明）
+      string rest= data (7, N (data));
+      int    sp  = search_forwards (" ", rest);
+      if (sp >= 0) {
+        editor ed= get_editor ();
+        if (!is_nil (ed))
+          ed->set_remote_cursor (rest (0, sp), rest (sp + 1, N (rest)));
+      }
+    }
+    else if (data == "SYNC-END") {
+      // 服务端补发完 snapshot/updates 后的下发结束标记：空文档无帧，靠它从
+      // await_frame 就绪；非空文档首帧已先行就绪，此处忽略。
+      if (state == collab_state::await_frame) {
+        if (DEBUG_LORO) debug_loro << "收到 SYNC-END，空文档就绪\n";
+        become_ready ();
+      }
+    }
+    return;
+  }
+  editor ed= get_editor ();
+  if (is_nil (ed)) return;
+  if (state == collab_state::await_frame) {
+    ed->queue_remote (data);
+    become_ready ();
+    // 初始化（JOIN
+    // 首帧）不补发光标：远端推送/初始化带来的光标变化本就是同步的，
+    // 待用户实际移动光标/编辑时再上行。
+  }
+  else if (state == collab_state::ready) {
+    ed->queue_remote (data);
+    // 远程编辑不补发光标：远端推送带来的光标/选区变化本就是同步的，不应再触发
+    // 本端补发（apply_remote 恢复期间 loro_applying_remote=true，hook
+    // 已被抑制）。
+  }
+}
+
+void
+collab_session::on_error (string msg) {
+  std_error << "WS Error: " << msg << "\n";
+}
+
+void
+collab_session::on_disconnect () {
+  if (DEBUG_LORO)
+    debug_loro << "WS 断开（want_reconnect=" << want_reconnect
+               << ", state=" << (int) state << "）\n";
+  if (want_reconnect) schedule_reconnect ();
+  else enter_idle ();
+}
+
+// -----------------------------------------------------------------------------
+// collab_session_manager
+// -----------------------------------------------------------------------------
+
+collab_session_manager::~collab_session_manager () {
+  for (int i= 0; i < N (sessions); i++) {
+    delete sessions[i];
+  }
+}
+
+collab_session*
+collab_session_manager::find_by_buffer (url buf_url) {
+  for (int i= 0; i < N (sessions); i++) {
+    if (sessions[i]->get_buffer_url () == buf_url) {
+      return sessions[i];
+    }
+  }
+  return nullptr;
+}
+
+collab_session*
+collab_session_manager::get_or_create (url buf_url) {
+  collab_session* session= find_by_buffer (buf_url);
+  if (!session) {
+    session= new collab_session (buf_url);
+    sessions << session;
+  }
+  return session;
+}
+
+void
+collab_session_manager::remove_session (collab_session* session) {
+  array<collab_session*> new_sessions;
+  for (int i= 0; i < N (sessions); i++) {
+    if (sessions[i] != session) {
+      new_sessions << sessions[i];
+    }
+  }
+  sessions= new_sessions;
+  delete session;
+}
+
+void
+collab_session_manager::poll_all () {
+  // Use a copy to allow deletion during poll
+  array<collab_session*> copy= sessions;
+  for (int i= 0; i < N (copy); i++) {
+    copy[i]->poll ();
+    if (!copy[i]->is_active () && copy[i]->is_buffer_known () &&
+        is_nil (concrete_buffer (copy[i]->get_buffer_url ()))) {
+      remove_session (copy[i]);
+    }
+  }
+}
+
+void
+collab_session_manager::apply_all () {
+  array<collab_session*> copy= sessions;
+  for (int i= 0; i < N (copy); i++) {
+    copy[i]->apply_queued_remote ();
+    if (!copy[i]->is_active () && copy[i]->is_buffer_known () &&
+        is_nil (concrete_buffer (copy[i]->get_buffer_url ()))) {
+      remove_session (copy[i]);
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Public C API (loro_collab.hpp)
+// -----------------------------------------------------------------------------
+
+string
+loro_collab_create (string server_url, string doc_name) {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) {
+    std_error << "无当前编辑器，无法创建协作文档\n";
+    return "";
+  }
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.get_or_create (buf);
+  session->create (server_url, doc_name);
+  return "";
+}
+
+void
+loro_collab_join (string server_url, string doc_id, string doc_name) {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) {
+    std_error << "无当前编辑器，无法加入协作文档\n";
+    return;
+  }
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.get_or_create (buf);
+  session->join (server_url, doc_id, doc_name);
+}
+
+void
+loro_collab_disconnect () {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) return;
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  if (session) {
+    session->disconnect ();
+    g_session_manager.remove_session (session);
+  }
+}
+
+bool
+loro_collab_is_active () {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) return false;
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  return session ? session->is_active () : false;
+}
+
+string
+loro_collab_doc_id () {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) return "";
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  return session ? session->get_doc_id () : "";
+}
+
+string
+loro_collab_doc_name () {
+  editor ed= get_current_editor ();
+  if (is_nil (ed)) return "";
+  url             buf    = get_current_buffer ();
+  collab_session* session= g_session_manager.find_by_buffer (buf);
+  return session ? session->get_doc_name () : "";
+}
+
+void
+loro_collab_poll () {
+  g_session_manager.poll_all ();
+}
+
+void
+loro_collab_apply () {
+  g_session_manager.apply_all ();
+}

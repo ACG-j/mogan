@@ -28,6 +28,17 @@
    bench_end ("my_task");
    ```
 
+### 注释规范
+
+1. **文档注释用 Doxygen 风格**：文件级、函数级说明用 `/** ... */` 或 `/*! ... */`，配合 `@file`、`@brief`、`@param`、`@return`、`@note`、`@par` 等标签，便于工具解析。中文撰写。
+
+2. **代码注释精简，避免冗余**：
+   - 函数内注释只写「为什么」（Why），不写「做什么」（What）——后者代码本身已表达。
+   - 不逐行复述代码。整段显而易见的逻辑不需注释。
+   - 一行注释能说清的不拆成多行段落。
+
+3. **版权块保持独立**：`MODULE / DESCRIPTION / COPYRIGHT / LICENSE` 标准版权块单独成块闭合，Doxygen 设计说明放在它之外（另起一个注释块），不混在一块。
+
 ## 分支命名规则
 
 分支格式：`username/200_27/xxx`
@@ -40,30 +51,258 @@
 - `da/200_27/xmake_debug`
 - `da/200_27/fix_pdf_rendering`
 
+## 任务文档
+
+每个任务在 `devel/<编号>.md` 维护一份文档。分支名中的任务编号即文档名,
+例如分支 `da/1113/backward` 对应 `devel/1113.md`。开始工作前先按分支定位
+任务文档,完成后把本次改动(What/Why/How/涉及文件)追加到文档里。
+
+## 首选项（preferences）存储
+
+首选项相关改动遵循以下约定：
+
+1. 首选项统一存放于 `$TEXMACS_HOME_PATH/system/preferences.json`（不按版本分目录），
+   `get_tm_preference_path ()` 返回固定路径，不拼接版本号；
+2. 不得假设统一位置一定存在配置文件（首次运行/全新安装可能没有），缺失时应按默认值处理；
+3. Mogan 不保留跨版本配置迁移：历史遗留的旧版本目录（`system/<版本>/`）中的首选项文件
+   不会被读取，也不做合并迁移。改首选项格式或读写逻辑时，只需保证新格式自身可读写，
+   不必兼容旧版本目录中的文件。
+
 ## 提交规范
 
-1. 一个 PR 至少分为两个 commit：
+1. 一个 PR 至少分为两个 commit（如果分支上已有 commit，此规则不适用）：
    - 第一个 commit 更新 `devel/xxxx.md` 任务文档
    - 后续 commit 为代码改动
-2. **提交前必须运行 `gf fmt --changed-since=main`** 格式化变更的 `.scm` 文件
+2. **提交前必须运行 `gf fmt --changed-since=main`** 格式化变更的 `.scm` 和 C++（`.cpp`/`.hpp`）文件
 3. 保持提交信息清晰、简洁，格式：`[编号] 简述`
 
 ## 代码推送规则
 
 1. 如果 remote 是 GitHub，使用 `gh` 命令推送代码并创建 PR
-2. 如果 remote 是 Gitee，直接使用 `git push` 推送代码
+2. 如果有 MoganLab/mogan 的分支推送权限，直接推送到 MoganLab/mogan 并创建 PR，**不要 fork**
+3. 如果 remote 是 Gitee，直接使用 `git push` 推送代码
 3. 推送前确保代码已通过本地测试
 4. 保持提交信息清晰、简洁
 
-## C++ 单元测试
+## 单元测试
 
-1. 所有 `tests/**_test.cpp` 文件会自动被 xmake 识别为测试目标
-2. 构建方式：`xmake b xxx_test`
-3. 运行方式：`xmake r xxx_test`
+项目有三类单元测试，xmake 自动发现（`tests/**_test.cpp`、`TeXmacs/progs/**/*-test.scm`、`TeXmacs/tests/*.scm`），无需手动登记。
+
+### 1. C++ 单元测试（`tests/**_test.cpp`）
+
+所有 `tests/**_test.cpp` 自动识别，链接 `libmogan` + `libmoebius`。
+
+```bash
+xmake b xxx_test && xmake r xxx_test
+```
+
+#### Qt 窗口测试
+
+测试中 `show()` 了顶层 `QWidget` 的用例，必须在测试类的 `cleanup()` 槽里调用
+`cleanup_qt_top_level_widgets()`（声明在 `tests/Base/base.hpp`）：
+
+```cpp
+class TestMyWidget : public QObject {
+  Q_OBJECT
+private slots:
+  void init () { init_lolly (); }
+  void cleanup () { cleanup_qt_top_level_widgets (); }
+  // ...
+};
+```
+
+**原因**：用例中途断言失败时，`new` 出来的 widget 不会被 `delete`，泄漏的窗口会持续显示，
+导致批量跑 `xmake run --group=tests` 时整个套件卡住，需要手动关弹窗；Windows 下
+下一个测试进程启动时 Qt `DllMain` 初始化失败（错误码 `0xC000013A`）。
+
+### 2. Scheme 纯逻辑测试（`TeXmacs/progs/**/tests/*-test.scm`）
+
+无 GUI、headless，适合测数据契约/编码一致性/纯函数。函数名 `(regtest-<basename>)`。
+参考 `TeXmacs/progs/texmacs/menus/tests/print-widgets-test.scm`：
+
+```scheme
+(import (liii check))
+(check-set-mode! 'report-failed)
+(load "./TeXmacs/progs/.../target-module.scm")  ;; 加载被测模块
+
+(define (test-foo) (check expr => expected))
+
+(tm-define (regtest-print-widgets)
+  (test-foo)
+  (check-report)
+) ;tm-define
+```
+
+```bash
+xmake b stem && xmake r print-widgets-test
+```
+
+### 3. 集成测试（`TeXmacs/tests/*.scm`）
+
+函数名 `(test_<NNNN>)`，参考 `TeXmacs/tests/2044.scm`：
+
+```scheme
+(import (liii check))
+(load "./TeXmacs/progs/.../target-module.scm")
+
+(tm-define (test_2044)
+  (run-chain (list
+    (cons "step 1" (lambda () ...))
+    (cons "report + quit" (lambda () (check-report) (quit-TeXmacs)))
+  ))
+) ;tm-define
+```
+
+**两种模式**：
+
+| 模式 | 命令 | 行为 |
+|------|------|------|
+| Headless | `xmake r 2044` | `-headless`，自动 `quit-TeXmacs`，冒烟验证进程不崩 |
+| GUI | `MOGAN_TEST_GUI=1 xmake r 2044` | 真实 GUI，不自动 quit，异步链真正调度执行断言 |
+
+- headless 下 `exec-delayed-at` 来不及调度就 `quit-TeXmacs`，断言不跑
+- GUI 模式下调试日志直接进终端，测试脚本自己延迟 `(quit-TeXmacs)`
+
+### 测试策略
+
+- C++ bridge 纯逻辑优先放 Scheme 纯逻辑测试（`*-test.scm`），headless 秒级反馈
+- C++ 测试仅覆盖 Qt 钩子/返回值形状/bridge 入口（如 `MOGAN_TEST_*=ok|cancel`）
+- GUI 专属代码路径（tab 切换、菜单重建）用 GUI 集成测试
+
+### Scheme 诊断
+
+1. **纯 scheme 逻辑用 `gf eval` 快速验证**：不依赖 mogan 内置（`translate` /
+   `get-pretty-preference` 等 tm 库）的纯函数，可用项目自带的 Goldfish Scheme
+   解释器直接跑，秒级反馈，无需构建 mogan：
+   ```bash
+   gf eval '(define (f x) `(a ,x)) (display (f 1)) (newline)'
+   ```
+   适合验证 quasiquote、列表处理等纯语言行为。
+
+2. **mogan scheme 列表字面量在求值位置会被求值**：裸写 `("a" "b")` 出现在
+   函数实参位置时，car `"a"` 被当函数应用而崩（`string ref: too many
+   indices`）。传常量列表必须 quote：`(f key '("a" "b"))`。quasiquote 内无
+   前置 `,` 的列表字面量原样保留，可裸写。
+
+3. **需 mogan 内置的脚本用真实二进制跑**：依赖 tm 库的诊断脚本，写临时
+   `.scm` 文件，用构建产物加载：
+   ```bash
+   TEXMACS_PATH=$(pwd)/TeXmacs \
+     build/macosx/arm64/release/MoganSTEM.app/Contents/MacOS/MoganSTEM \
+     -headless -d -x "(load \"/tmp/diag.scm\")"
+   ```
+
+## 单元测试
+
+项目有三类单元测试，xmake 自动发现并构建（无需手动登记）：
+
+### 1. C++ 测试（`tests/**_test.cpp`）
+
+自动发现、链接 `libmogan` + `libmoebius`。参考 `tests/Plugins/Qt/font_selector_bridge_test.cpp`：
+
+```cpp
+#include "base.hpp"  // init_lolly
+class TestFoo : public QObject {
+  Q_OBJECT
+private slots:
+  void init () { init_lolly (); }
+  void test_case ();
+};
+// ... 实现 ...
+#ifdef QTTEXMACS
+QTEST_MAIN (TestFoo)
+#else
+int main () { return 0; }
+#endif
+#include "foo_test.moc"
+```
+
+构建与运行：
+```bash
+xmake b foo_test && xmake r foo_test
+```
+
+### 2. Scheme 纯逻辑测试（`TeXmacs/progs/**/*-test.scm`）
+
+无 GUI、headless，适合测数据契约/编码一致性/纯函数。函数名 `(regtest-<basename>)`。
+参考 `TeXmacs/progs/texmacs/menus/print-widgets-test.scm`：
+
+```scheme
+(import (liii check))
+(check-set-mode! 'report-failed)
+(load "./TeXmacs/progs/.../target-module.scm")  ;; 加载被测模块
+
+(define (test-foo) (check expr => expected))
+
+(tm-define (regtest-print-widgets)
+  (test-foo)
+  (check-report)
+) ;tm-define
+```
+
+构建与运行：
+```bash
+xmake b stem && xmake r print-widgets-test
+```
+
+### 3. GUI 集成测试（`TeXmacs/tests/*.scm`）
+
+真实 GUI 进程，通过 `exec-delayed-at` 串异步链驱动。函数名 `(test_<NNNN>)`。
+参考 `TeXmacs/tests/2044.scm`：
+
+```scheme
+(import (liii check))
+(load "./TeXmacs/progs/.../target-module.scm")
+
+(tm-define (test_2044)
+  (run-chain (list
+    (cons "step 1" (lambda () ...))
+    (cons "step 2" (lambda () ...))
+    (cons "report + quit" (lambda () (check-report) (quit-TeXmacs)))
+  ))
+) ;tm-define
+```
+
+需 `MOGAN_TEST_GUI=1` 才真正跑断言（headless 模式仅冒烟进程不崩）：
+```bash
+xmake b stem && MOGAN_TEST_GUI=1 xmake r 2044
+```
+
+### 测试策略
+
+- C++ bridge 纯逻辑轮子优先放 Scheme 纯逻辑测试（`*-test.scm`），headless 秒级反馈
+- C++ 测试仅覆盖 Qt 钩子/返回值形状/bridge 入口（如 `MOGAN_TEST_*=ok|cancel`）
+- GUI 专属路径（tab 切换、菜单重建）用 GUI 集成测试
+
+### lolly 单元测试（`lolly/tests/**_test.cpp`）
+
+lolly 是独立的 xmake 子工程,须在 `lolly/` 目录下构建,测试目标名为
+`lolly_tests/<测试文件名>`（不含 `_test` 后缀）:
+
+```bash
+cd lolly
+xmake b lolly_tests
+xmake test lolly_tests/hashmap_test   # 单个测试
+# 或直接跑二进制(支持 doctest 参数过滤用例):
+./build/linux/x86_64/releasedbg/lolly_tests_hashmap_test --test-case="*resize*"
+```
 
 ## 构建命令
 
 主项目构建：`xmake b stem`
+
+如果构建失败（例如配置缓存陈旧、依赖路径错乱），执行 `xmake f -c --yes` 清理配置缓存后重新构建。
+
+### Scheme Glue（C++ ↔ scheme 绑定）
+
+- **glue 声明在 `.lua` 不在 `.scm`**：mogan 的 glue 由 xmake 规则 `xmake/rules/glue.lua`
+   在构建期生成 `build/.gens/.../glue/glue_*.cpp`。**声明源是 `src/Scheme/Glue/glue_*.lua`**
+   （如 `glue_editor.lua`），不是 texmacs 遗留的 `build-glue-editor.scm` /
+   `TeXmacs/progs/prog/glue-symbols.scm`——那两个 `.scm` 文件 mogan 不使用，改了不生效。
+   新增一个 scheme 可调的 C++ 函数（编辑器方法）：
+   - C++：在 `edit_modify_rep` 等加方法（glue 规则给所有调用加 `get_current_editor()->`
+     前缀，故只能绑编辑器方法，不能绑自由函数——自由函数要包一层方法转调）。
+   - `glue_*.lua`：加 `{ scm_name = "foo", cpp_name = "foo", ret_type = "...", arg_list = {...} }`。
 
 ## 工作流程
 

@@ -26,6 +26,7 @@
 #include "socket_notifier.hpp"
 #include "tm_debug.hpp"
 #include "tree_helper.hpp"
+#include "tree_traverse.hpp"
 
 using namespace moebius;
 
@@ -220,6 +221,10 @@ connection_handlers (string name) {
 string
 connection_start (string name, string session, bool again) {
   // cout << "Start " << name << ", " << session << "\n";
+#ifdef OS_WASM
+  // WASM 暂时不提供多进程支持
+  return "Error: socket connections not supported on WASM yet.";
+#endif
   if (!connection_declared (name))
     return "Error: connection " * name * " has not been declared";
 
@@ -258,7 +263,8 @@ connection_write (string name, string session, string s) {
 void
 connection_write (string name, string session, tree t) {
   // cout << "Write " << name << ", " << session << ", " << t << "\n";
-  string s= as_string (call ("plugin-serialize", name, tree_to_stree (t)));
+  tree   u= tree_herk_to_utf8 (t);
+  string s= as_string (call ("plugin-serialize", name, tree_to_stree (u)));
   connection_write (name, session, s);
 }
 

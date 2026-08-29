@@ -10,8 +10,8 @@
  ******************************************************************************/
 
 #include "client_server.hpp"
-#include "scheme.hpp"
 #include "socket_server.hpp"
+#include "tm_debug.hpp"
 #include "tm_link.hpp"
 
 #ifdef QTTEXMACS
@@ -31,10 +31,6 @@ static socket_server* the_server= NULL;
 void
 server_start () {
   if (the_server == NULL) {
-    (void) eval ("(use-modules (server server-base))");
-    (void) eval ("(use-modules (server server-tmfs))");
-    (void) eval ("(use-modules (server server-menu))");
-    (void) eval ("(use-modules (server server-live))");
     the_server= tm_new<socket_server> ("", 6561);
   }
   if (the_server->alive ()) cout << "TeXmacs] Server started... \n";
@@ -88,14 +84,12 @@ static socket_server_rep* the_server= NULL;
 void
 server_start () {
   if (the_server == NULL) {
-    (void) eval ("(use-modules (server server-base))");
-    (void) eval ("(use-modules (server server-tmfs))");
-    (void) eval ("(use-modules (server server-menu))");
-    (void) eval ("(use-modules (server server-live))");
     the_server= tm_new<socket_server_rep> (6561);
   }
-  if (!the_server->alive)
-    cout << "TeXmacs] Starting server... " << the_server->start () << "\n";
+  if (!the_server->alive) {
+    string started= the_server->start ();
+    if (DEBUG_STD) debug_std << "Starting server... " << started << "\n";
+  }
 }
 
 void

@@ -20,8 +20,10 @@
 #else
 #ifdef QTTEXMACS
 #include "Qt/qt_simple_widget.hpp"
+#elif defined(MOGAN_CLI)
+#include "CLI/cli_simple_widget.hpp"
 #else
-#include "Widkit/simple_wk_widget.hpp"
+#include "ImGui/im_simple_widget.hpp"
 #endif
 #endif
 
@@ -252,7 +254,9 @@ box_widget (scheme_tree p, string s, color col, bool trans, bool ink) {
   if ((n >= 6) && is_atomic (p[5])) dpi= as_int (p[5]);
   if ((n >= 7) && is_atomic (p[6])) dw= as_int (p[6]);
   font fn= find_font (family, fn_class, series, shape, sz, dpi);
-  box  b = text_box (decorate (), 0, s, fn, col);
+  if (is_nil (fn) || !fn->supports (s))
+    fn= smart_font (family, fn_class, series, shape, sz, dpi);
+  box b= text_box (decorate (), 0, s, fn, col);
   if (ink) b= resize_box (decorate (), b, b->x3, b->y3, b->x4, b->y4, true);
   return box_widget (b, trans, dw);
 }

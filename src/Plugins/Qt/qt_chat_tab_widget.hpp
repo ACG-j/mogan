@@ -32,6 +32,7 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 class QEvent;
+class QPaintEvent;
 class QTMWidget;
 class QTMStateToolButton;
 class qt_tm_widget_rep;
@@ -71,6 +72,15 @@ public:
   void enterConversationMode ();
 
   /**
+   * @brief 按需创建消息区嵌入编辑器（幂等）。
+   *
+   * welcome 阶段只展示输入框，message 嵌入编辑器推迟到进入对话模式时
+   * 才创建，避免空会话为不可见编辑器支付 buffer/view/typeset 成本。
+   * buffer 中可能已有 scheme 侧写入的内容，创建时以现有 body 初始化。
+   */
+  void ensureMessageWidget ();
+
+  /**
    * @brief 聚焦到输入区域。
    */
   void focusInput ();
@@ -83,12 +93,15 @@ public:
 
   QToolButton*  sendButton () const { return sendButton_; }
   QToolButton*  thinkingButton () const { return thinkingButton_; }
+  QToolButton*  searchButton () const { return searchButton_; }
   QLabel*       sessionTitle () const { return sessionTitle_; }
   const string& sessionId () const { return sessionId_; }
   bool          conversationMode () const { return conversationMode_; }
 
   /**
    * @brief 判断文档体是否为空（仅含一个空字符串的 DOCUMENT 节点）。
+   *
+   * get_buffer_body 对不存在的 buffer 返回原子空串，也视为空。
    * @param body 文档体 tree
    * @return 为空时返回 true
    */
@@ -114,14 +127,17 @@ public:
    * @param key 按键值
    * @param mods 修饰键状态
    * @param hasActiveCompletionPopup 是否存在待确认的补全/Tab cycle 弹窗
+   * @param isInHybrid 光标是否位于 hybrid 节点内（如 \alpha 未完成输入）
    * @return 应触发发送时返回 true
    */
   static bool should_send_on_keypress (int key, Qt::KeyboardModifiers mods,
-                                       bool hasActiveCompletionPopup);
+                                       bool hasActiveCompletionPopup,
+                                       bool isInHybrid= false);
 
 signals:
   void sendRequested (const string& sessionId);
   void thinkingToggled (const string& sessionId, bool enabled);
+  void searchToggled (const string& sessionId, bool enabled);
   void inputHeightChanged ();
   void closeSidebarInDockModeRequested ();
 
@@ -152,6 +168,7 @@ private:
   QTMWidget*   inputQTMWidget_   = nullptr;    ///< 输入区 QTMWidget
   QToolButton* sendButton_       = nullptr;    ///< 发送/停止按钮
   QToolButton* thinkingButton_   = nullptr;    ///< 推理模式开关
+  QToolButton* searchButton_     = nullptr;    ///< 网络搜索开关
   QSpacerItem* topSpacer_        = nullptr;    ///< 欢迎页顶部弹性空间
   widget       messageWidget_;                 ///< 消息区 TeXmacs widget
   widget       inputWidget;                    ///< 输入区 TeXmacs widget
@@ -188,6 +205,8 @@ public:
    */
   ChatSidebar (const QList<SessionDisplayInfo>& sessions,
                const string& activeSessionId, QWidget* parent= nullptr);
+
+  ~ChatSidebar () override;
 
   // ---- 按场景调用的针对性方法（替代 refresh） ----
 
@@ -280,8 +299,8 @@ signals:
   void multiArchiveRequested (const QList<string>& sessionIds);
 
 private:
-  QMap<string, SidebarItem> items_; ///< sessionId → SidebarItem 映射
-
+  QMap<string, SidebarItem> items_;            ///< sessionId → SidebarItem 映射
+  bool         destroying_            = false; ///< 析构进行中，禁止信号重入回调
   QLabel*      conversationCountLabel_= nullptr; ///< 活跃会话计数标签
   QWidget*     conversationListWidget_= nullptr; ///< 活跃会话列表容器
   QVBoxLayout* conversationListLayout_= nullptr; ///< 活跃会话列表布局
@@ -391,6 +410,14 @@ public:
   // ---- 供外部组件访问 ----
   QWidget* contentWidget () const { return contentWidget_; }
 
+  /**
+   * @brief 点击 Chat 标签页时开始 chat_init 计时，
+   * 在控件首次绘制完成（paintEvent）时结束。
+   */
+  static void beginInitBench ();
+  /// chat_init 计时是否进行中（用于子阶段日志门控）
+  static bool isInitBenchPending () { return initBenchPending_; }
+
 signals:
   void cancelRequested (const string& sessionId);
   void newChatRequested ();
@@ -402,6 +429,8 @@ protected:
   void keyReleaseEvent (QKeyEvent* event) override;
   /// 事件过滤器
   bool eventFilter (QObject* watched, QEvent* event) override;
+  /// 首次绘制时结束 chat_init 计时
+  void paintEvent (QPaintEvent* event) override;
 
 private:
   /// 构建左侧侧边栏布局
@@ -434,6 +463,7 @@ private:
   qt_tm_widget_rep*      parentTmWidget_= nullptr; ///< 关联的 TeXmacs widget
 
   static bool globalSidebarCollapsed_; ///< 全局记忆的侧边栏折叠状态
+  static bool initBenchPending_;       ///< chat_init 计时待结束标记
 };
 
 #endif // QT_CHAT_TAB_WIDGET_HPP

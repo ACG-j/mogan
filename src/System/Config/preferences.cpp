@@ -10,7 +10,6 @@
  ******************************************************************************/
 
 #include "preferences.hpp"
-#include "analyze.hpp"
 #include "file.hpp"
 #include "iterator.hpp"
 #include "merge_sort.hpp"
@@ -20,10 +19,12 @@
 #include "tree_helper.hpp"
 
 #include <moebius/data/scheme.hpp>
+#include <nlohmann/json.hpp>
+#include <string>
 
-using moebius::data::block_to_scheme_tree;
 using moebius::data::scm_quote;
 using moebius::data::scm_unquote;
+using nlohmann::json;
 
 tree texmacs_settings= tuple ();
 
@@ -104,6 +105,13 @@ set_user_preference (string var, string val) {
 }
 
 void
+set_user_preference_silent (string var, string val) {
+  if (val == "default") user_prefs->reset (var);
+  else user_prefs (var)= val;
+  user_prefs_modified= true;
+}
+
+void
 reset_user_preference (string var) {
   user_prefs->reset (var);
   user_prefs_modified= true;
@@ -120,23 +128,37 @@ get_user_preference (string var, string val) {
  * Loading and saving user preferences
  ******************************************************************************/
 
+// lolly string 与 std::string 互转（nlohmann::json 的键/值用 std::string）
+static string
+lolly_string (const std::string& s) {
+  return string (s.c_str ());
+}
+
+static std::string
+std_string (const string& s) {
+  std::string r= std::string (c_string (s));
+  return r;
+}
+
+// 读取 JSON 首选项文件：仅导入键值均为字符串的原子项，
+// 其余（数字/布尔/null）跳过以容错
+static void
+load_json_preferences (url prefs_file) {
+  json j= json::parse (std_string (string_load (prefs_file)), nullptr, false);
+  if (j.is_discarded () || !j.is_object ()) return;
+  for (json::iterator it= j.begin (); it != j.end (); ++it)
+    if (it.value ().is_string ())
+      user_prefs (lolly_string (it.key ()))=
+          lolly_string (it.value ().get<std::string> ());
+}
+
 void
 load_user_preferences () {
-  url  prefs_file= get_tm_preference_path ();
-  tree p (TUPLE);
+  url prefs_file= get_tm_preference_path ();
+  user_prefs    = hashmap<string, string> ("");
   if (exists (prefs_file)) {
-    p= block_to_scheme_tree (string_load (prefs_file));
+    load_json_preferences (prefs_file);
   }
-  while (is_func (p, TUPLE, 1))
-    p= p[0];
-  for (int i= 0; i < N (p); i++)
-    if (is_func (p[i], TUPLE, 2) && is_atomic (p[i][0]) &&
-        is_atomic (p[i][1]) && is_quoted (p[i][0]->label) &&
-        is_quoted (p[i][1]->label)) {
-      string var      = scm_unquote (p[i][0]->label);
-      string val      = scm_unquote (p[i][1]->label);
-      user_prefs (var)= val;
-    }
   user_prefs_modified= false;
 }
 
@@ -149,11 +171,10 @@ save_user_preferences () {
   while (it->busy ())
     a << it->next ();
   merge_sort (a);
-  string s;
+  json j= json::object ();
   for (int i= 0; i < N (a); i++)
-    s << "(" << scm_quote (a[i]) << " " << scm_quote (user_prefs[a[i]])
-      << ")\n";
-  if (save_string (prefs_file, s))
+    j[std_string (a[i])]= std_string (user_prefs[a[i]]);
+  if (save_string (prefs_file, lolly_string (j.dump ())))
     std_warning << "The user preferences could not be saved\n";
   user_prefs_modified= false;
 }

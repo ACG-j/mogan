@@ -610,14 +610,8 @@
 ) ;tm-define
 
 (tm-define field-tags
-  '(input unfolded-io
-     folded-io
-     input-math
-     unfolded-io-math
-     folded-io-math
-     input-text
-     unfolded-io-text
-     folded-io-text)
+  '(input unfolded-io folded-io input-math unfolded-io-math folded-io-math
+     input-text unfolded-io-text folded-io-text)
 ) ;tm-define
 
 (tm-define (field-context? t)
@@ -946,7 +940,7 @@
       field-input-context?
       (with u
         (tree-ref t :previous 0)
-        (if (url-exists? (url-unix "$TEXMACS_STYLE_PATH" (string-append lan ".ts")))
+        (if (url-exists? (url-unix "$TEXMACS_STYLE_PATH" (string-append lan ".stem")))
           (add-style-package lan)
         ) ;if
         (if (not (has-style-package? "framed-session"))
@@ -1011,7 +1005,8 @@
                 (opts (input-options t))
                 (st (tree->stree (tree-ref t 1)))
                 (pre (plugin-preprocess lan ses st opts))
-                (in (plugin-serialize lan pre))
+                (pre-u8 (tree->stree (herk-tree->utf8-tree (stree->tree pre))))
+                (in (plugin-serialize lan pre-u8))
                 (rew (if (string-ends? in "\n") (string-drop-right in 1) in))
                 (cmd (string-append "(input-done? " (string-quote rew) ")"))
                 (ret (lambda (done?) (kbd-enter-sub t done?)))

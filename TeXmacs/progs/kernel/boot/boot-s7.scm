@@ -50,7 +50,7 @@
 (with-let (rootlet)
   (define *texmacs-module* (rootlet))
   (define *module-name* '(texmacs))
-  (define *modules* (make-hash-table))
+  (define *modules* (s7-make-hash-table))
 ) ;with-let
 
 (define *texmacs-user-module* (curlet))
@@ -106,13 +106,34 @@
 ) ;define
 
 (define (list->module module)
-  (let* ((aux (lambda (s) (string-append "/" (symbol->string s))))
+  ;; 按最外层模块名路由，固定路径定位，不再扫描 $GUILE_LOAD_PATH：
+  ;;   内置模块 → $TEXMACS_PATH/progs/
+  ;;   插件模块 → $TEXMACS_HOME_PATH/plugins/<first-ns>/progs/ 优先，
+  ;;             其次 $TEXMACS_PATH/plugins/<first-ns>/progs/
+  (let* ((sep (string (os-sep)))
+         (aux (lambda (s) (string-append sep (symbol->string s))))
          (name* (apply string-append (map aux module)))
          (name (substring name* 1 (string-length name*)))
-         (u (url-unix "$GUILE_LOAD_PATH" (string-append name ".scm")))
-         ;; FIXME: should use %load-path instead of $GUILE_LOAD_PATH
+         (first-ns (symbol->string (car module)))
+         (file (string-append name ".scm"))
+         (texmacs-path (url->system (get-texmacs-path)))
+         (texmacs-home-path (url->system (get-texmacs-home-path)))
+         ;; 1. 内置模块
+         (p1 (string-append texmacs-path sep "progs" sep file))
         ) ;
-    (url-materialize u "r")
+    (if (file-exists? p1)
+      p1
+      ;; 2. 插件（用户路径优先）
+      (let* ((plug-dir (string-append "plugins" sep first-ns sep "progs" sep))
+             (p2 (string-append texmacs-home-path sep plug-dir file))
+            ) ;
+        (if (file-exists? p2)
+          p2
+          ;; 3. 插件（系统路径）
+          (string-append texmacs-path sep plug-dir file)
+        ) ;if
+      ) ;let*
+    ) ;if
   ) ;let*
 ) ;define
 
@@ -187,7 +208,7 @@
     `(begin
        (define *module-name* (quote ,name))
        (define *exports* ())
-       (hash-table-set! *modules* (quote ,name) (current-module))
+       (s7-hash-table-set! *modules* (quote ,name) (current-module))
        ,@l)
   ) ;let
 ) ;define-macro
@@ -212,5 +233,15 @@
   ) ;cons
 ) ;set!
 
-(load "scheme/boot.scm")
+;; goldfish v18.11.26 起 define-library/import 为 C 实现
+;; （s7_r7rs_library.c）。其 export 校验对本 body 未定义的名字依赖
+;; 「落入 rootlet」的兜底（s7_is_defined）：scheme/boot.scm 顶层定义的
+;; delete-file、(scheme base) 的 list-copy 等经此通道被 srfi-1、
+;; (scheme file) 等库传递性 re-export。goldfish 自身在 rootlet 求值，
+;; 这些定义天然全局；mogan 顶层是 *texmacs-user-module*，故 boot.scm
+;; 与基础库需显式装入 rootlet。
+(load "scheme/boot.scm" (rootlet))
+(with-let (rootlet) (import (scheme base)))
 (import (scheme base))
+(import (scheme char))
+(import (liii os))

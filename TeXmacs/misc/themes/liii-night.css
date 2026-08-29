@@ -126,31 +126,22 @@ QWK--WindowBar>QAbstractButton#close-button:pressed {
 
 QWK--WindowBar>QAbstractButton#login-button {
   qproperty-iconNormal: url(":/window-bar/login-white.svg");
-}
-
-/* 未登录状态 - 使用蓝色强调 */
-QWK--WindowBar>QAbstractButton#login-button[login-state="not-logged-in"] {
-  color: #4fc3f7;
-}
-
-/* 已登录状态 - 使用常规颜色 */
-QWK--WindowBar>QAbstractButton#login-button[login-state="logged-in"] {
   color: #ffffff;
 }
 
-/* VIP升级按钮 */
-QWK--WindowBar>QPushButton#vip-button {
+/* 领取会员按钮 */
+QWK--WindowBar>QPushButton#invite-button {
   background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #215a6a, stop:1 #2791ad);
   border: none;
   color: #ffffff;
   font-weight: bold;
 }
 
-QWK--WindowBar>QPushButton#vip-button:hover {
+QWK--WindowBar>QPushButton#invite-button:hover {
   background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2a6f82, stop:1 #30a5c5);
 }
 
-QWK--WindowBar>QPushButton#vip-button:pressed {
+QWK--WindowBar>QPushButton#invite-button:pressed {
   background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1a4652, stop:1 #1e7a94);
 }
 
@@ -740,7 +731,6 @@ QLabel#login-membership-title {
   font-weight: bold;
   color: #ffffff;
   background: transparent;
-  display: block;
   margin-bottom: 2px;
 }
 
@@ -749,7 +739,6 @@ QLabel#login-membership-period {
   font-size: 12px;
   color: #cccccc;
   background: transparent;
-  display: block;
   margin-bottom: 6px;
 }
 
@@ -849,6 +838,68 @@ QToolButton#base_popup_button:checked {
 
 QToolButton#base_popup_button:checked:hover {
   background: rgb(133, 133, 133);
+}
+
+/*用户确认弹窗（AI 接受/拒绝）容器*/
+QWidget#centralWidget QFrame#prompt_container {
+  background-color: #2c2c2c;
+  border-color: #555555;
+}
+
+/*接受按钮（现代祖母绿配色）。尺寸由 QTMUserPromptPopup 经 DpiUtils 提供*/
+QWidget#centralWidget QPushButton#accept_btn {
+  background-color: #10b981;
+  color: #ffffff;
+  border: none;
+}
+
+QWidget#centralWidget QPushButton#accept_btn:hover {
+  background-color: #34d399;
+}
+
+QWidget#centralWidget QPushButton#accept_btn:pressed {
+  background-color: #059669;
+}
+
+/*拒绝按钮（轻柔番茄红配色）*/
+QWidget#centralWidget QPushButton#reject_btn {
+  background-color: #ef4444;
+  color: #ffffff;
+  border: none;
+}
+
+QWidget#centralWidget QPushButton#reject_btn:hover {
+  background-color: #f87171;
+}
+
+QWidget#centralWidget QPushButton#reject_btn:pressed {
+  background-color: #dc2626;
+}
+
+/*点赞/踩按钮*/
+QWidget#centralWidget QPushButton#good_btn,
+QWidget#centralWidget QPushButton#bad_btn {
+  background-color: transparent;
+  color: #d1d5db;
+  border: none;
+}
+
+QWidget#centralWidget QPushButton#good_btn {
+  qproperty-icon: url(":/feedback/good-ico-white.svg");
+}
+
+QWidget#centralWidget QPushButton#bad_btn {
+  qproperty-icon: url(":/feedback/bad-ico-white.svg");
+}
+
+QWidget#centralWidget QPushButton#good_btn:hover,
+QWidget#centralWidget QPushButton#bad_btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+QWidget#centralWidget QPushButton#good_btn:pressed,
+QWidget#centralWidget QPushButton#bad_btn:pressed {
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 /****************************************************************************
@@ -1473,6 +1524,22 @@ QWidget#centralWidget QToolButton#chat-tab-thinking-btn {
 }
 QToolButton#chat-tab-thinking-btn:checked,
 QWidget#centralWidget QToolButton#chat-tab-thinking-btn:checked {
+  background: #215a6a33;
+  border: 1px solid #2791ad;
+  color: #2791ad;
+}
+
+/* 搜索按钮 */
+QToolButton#chat-tab-search-btn,
+QWidget#centralWidget QToolButton#chat-tab-search-btn {
+  color: #ffffff;
+  border: 1px solid #7a7a7a;
+  background: transparent;
+  qproperty-iconNormal: url(":/llm-chat/search-white.svg");
+  qproperty-iconChecked: url(":/llm-chat/search-dark.svg");
+}
+QToolButton#chat-tab-search-btn:checked,
+QWidget#centralWidget QToolButton#chat-tab-search-btn:checked {
   background: #215a6a33;
   border: 1px solid #2791ad;
   color: #2791ad;

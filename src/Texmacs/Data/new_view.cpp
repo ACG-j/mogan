@@ -87,9 +87,74 @@ is_chat_tab_buffer (url name) {
   return starts (as_string (name), "tmfs://chat-tab");
 }
 
+/**
+ * @brief 判断 buffer 名称是否指向聊天会话的只读消息展示区。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称形如 \c tmfs://chat/<sid>/message 则返回 true。
+ * @note 输入框（\c .../input）不在此列：dock 侧边栏模式下焦点切到输入框时
+ * 模式工具栏仍需随其重建。
+ */
+bool
+is_chat_message_buffer (url name) {
+  string s= as_string (name);
+  return starts (s, "tmfs://chat/") && ends (s, "/message");
+}
+
+/**
+ * @brief 判断 buffer 名称是否指向聊天会话的输入框。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称形如 \c tmfs://chat/<sid>/input 则返回 true。
+ */
+bool
+is_chat_input_buffer (url name) {
+  string s= as_string (name);
+  return starts (s, "tmfs://chat/") && ends (s, "/input");
+}
+
 bool
 is_startup_tab_buffer (url name) {
   return name == url ("tmfs://startup-tab");
+}
+
+/**
+ * @brief 判断 buffer 名称是否指向搜索辅助缓冲区。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称以 \c tmfs://aux/search 开头则返回 true。
+ */
+bool
+is_aux_search_buffer (url name) {
+  return starts (as_string (name), "tmfs://aux/search");
+}
+
+/**
+ * @brief 判断 buffer 名称是否指向替换辅助缓冲区。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称以 \c tmfs://aux/replace 开头则返回 true。
+ */
+bool
+is_aux_replace_buffer (url name) {
+  return starts (as_string (name), "tmfs://aux/replace");
+}
+
+/**
+ * @brief 判断 buffer 名称是否指向页眉页脚辅助缓冲区。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称以 \c tmfs://aux/page- 开头则返回 true
+ *         （page-odd/even-header/footer 四个变体均命中）。
+ */
+bool
+is_aux_page_buffer (url name) {
+  return starts (as_string (name), "tmfs://aux/page-");
+}
+
+/**
+ * @brief 判断 buffer 名称是否指向评论编辑辅助缓冲区。
+ * @param name 待检测的 buffer URL。
+ * @return 若名称以 \c tmfs://aux/edit-comment 开头则返回 true。
+ */
+bool
+is_aux_comment_buffer (url name) {
+  return starts (as_string (name), "tmfs://aux/edit-comment");
 }
 
 url
@@ -407,8 +472,8 @@ get_recent_view (url name) {
   // the current buffer or another view attached to a window
   array<url> vs= buffer_to_views (name);
   if (N (vs) == 0) return get_new_view (name);
-  url u= get_current_view ();
-  if (view_to_buffer (u) == name) return u;
+  url u= get_current_view_safe ();
+  if (!is_none (u) && view_to_buffer (u) == name) return u;
   url r= get_recent_view (name, true, false, true, false);
   if (!is_none (r)) return r;
   r= get_recent_view (name, true, false, false, false);
@@ -557,8 +622,13 @@ notify_rename_before (url old_name) {
 void
 notify_rename_after (url new_name) {
   array<url> vs= buffer_to_views (new_name);
-  for (int i= 0; i < N (vs); i++)
+  for (int i= 0; i < N (vs); i++) {
     notify_set_view (vs[i]);
+    // buffer 重命名后刷新 tab 栏与侧栏文档列表
+    tm_view vw= concrete_view (vs[i]);
+    if (vw != NULL && vw->win != NULL && has_current_window ())
+      vw->ed->update_menus (TAB_PAGES | SIDE_TOOLS);
+  }
 }
 
 /******************************************************************************
@@ -762,6 +832,12 @@ switch_to_buffer (url name) {
   url     u = get_passive_view_of_tabpage (name);
   tm_view vw= concrete_view (u);
   if (vw == NULL) return;
+  // Headless / no-window: make this the current view without attaching to a
+  // window, so buffer operations (load/export/render) work without a GUI.
+  if (!has_current_window ()) {
+    set_current_view (u);
+    return;
+  }
   window_set_view (get_current_window (), u, true);
   tm_window nwin= vw->win;
   if (nwin != NULL)

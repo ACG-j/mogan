@@ -94,24 +94,13 @@ system (string which, url u1, const char* sep, url u2) {
  * Getting attributes of a file
  ******************************************************************************/
 url
-url_numbered (url dir, string prefix, string postfix, int i) {
-  if (!exists (dir)) mkdir (dir);
-  for (; true; i++) {
-    url name= dir * (prefix * as_string (i) * postfix);
-    if (!exists (name)) return name;
-  }
-  return dir * (prefix * "x" * postfix);
-}
-
-url
-url_scratch (string prefix, string postfix, int i) {
-  url dir= get_documents_path () * "LiiiSTEM/no_name";
-  return url_numbered (dir, prefix, postfix, i);
+scratch_dir () {
+  return get_documents_path () * "LiiiSTEM/no_name";
 }
 
 bool
 is_scratch (url u) {
-  return head (u) == get_documents_path () * "LiiiSTEM/no_name";
+  return head (u) == scratch_dir ();
 }
 
 string

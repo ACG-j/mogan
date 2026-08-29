@@ -66,16 +66,14 @@
     (=> "Part" (link document-part-menu))
   ) ;if
   (if (project-attached?) (=> "Project" (link project-menu)))
-  (if (with-versioning-tool?) (=> "Version" (link version-menu)))
   (=> "View::menu" (link view-menu))
-  (=> "Go" (link go-menu))
-  (if (detailed-menus?) (=> "Tools" (link tools-menu)))
+  (if (qt-gui?) (=> "Go" (link go-menu)))
+  (if (qt-gui?) (if (detailed-menus?) (=> "Tools" (link tools-menu))))
   (if (with-database-tool?) (=> "Data" (link db-menu)))
-  (if (with-remote-tool?) (=> "Remote" (link remote-menu)))
   (if (with-debugging-tool?) (=> "Debug" (link debug-menu)))
   (if (with-developer-tool?) (=> "Developer" (link developer-menu)))
   (if (nnull? (test-menu)) (=> "Test" (link test-menu)))
-  (=> "Help" (link help-menu))
+  (if (qt-gui?) (=> "Help" (link help-menu)))
 ) ;menu-bind
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -89,13 +87,12 @@
  ("Remote control" (toggle-remote-control-mode))
 ) ;menu-bind
 
-(menu-bind texmacs-popup-menu (link focus-menu))
-
 (tm-menu (texmacs-popup-menu)
-  (:require (full-screen?))
-  (link presentation-popup-menu)
-  ---
-  (former)
+ ("Paste" (kbd-paste))
+ ("Magic paste" (kbd-magic-paste))
+ ("Paste special" (interactive-paste-special))
+ ("Copy" (kbd-copy))
+ (=> "Copy to" (link clipboard-copy-export-menu))
 ) ;tm-menu
 
 (menu-bind focus-popup-menu ("Focus mode" (toggle-focus-mode)))
@@ -103,8 +100,11 @@
 (tm-menu (texmacs-popup-menu)
   (:require (and (focus-mode?) (not (simplest-mode?))))
   (link focus-popup-menu)
-  ---
-  (former)
+  ("Paste" (kbd-paste))
+  ("Magic paste" (kbd-magic-paste))
+  ("Paste special" (interactive-paste-special))
+  ("Copy" (kbd-copy))
+  (=> "Copy to" (link clipboard-copy-export-menu))
 ) ;tm-menu
 
 (menu-bind simplest-popup-menu ("Simplest mode" (toggle-simplest-mode)))
@@ -112,8 +112,11 @@
 (tm-menu (texmacs-popup-menu)
   (:require (simplest-mode?))
   (link simplest-popup-menu)
-  ---
-  (former)
+  ("Paste" (kbd-paste))
+  ("Magic paste" (kbd-magic-paste))
+  ("Paste special" (interactive-paste-special))
+  ("Copy" (kbd-copy))
+  (=> "Copy to" (link clipboard-copy-export-menu))
 ) ;tm-menu
 
 (tm-menu (texmacs-popup-menu)
@@ -124,12 +127,19 @@
 ) ;tm-menu
 
 (tm-menu (texmacs-popup-menu)
-  (:require (not (chat-input-buffer? (current-buffer-url))))
+  (:require (chat-message-buffer? (current-buffer-url)))
+  ("Copy" (kbd-copy))
+  (=> "Copy to" (link clipboard-copy-export-menu))
+) ;tm-menu
+
+(tm-menu (texmacs-popup-menu)
+  (:require (full-screen?))
+  (link presentation-popup-menu)
+  ("Paste" (kbd-paste))
   ("Magic paste" (kbd-magic-paste))
   ("Paste special" (interactive-paste-special))
+  ("Copy" (kbd-copy))
   (=> "Copy to" (link clipboard-copy-export-menu))
-  ---
-  (former)
 ) ;tm-menu
 
 (menu-bind texmacs-alternative-popup-menu
@@ -154,12 +164,10 @@
     (-> "Part" (link document-part-menu))
   ) ;if
   (if (project-attached?) (=> "Project" (link project-menu)))
-  (if (with-versioning-tool?) (-> "Version" (link version-menu)))
   (-> "View::menu" (link view-menu))
   (-> "Go" (link go-menu))
   (if (detailed-menus?) (-> "Tools" (link tools-menu)))
   (if (with-database-tool?) (-> "Data" (link db-menu)))
-  (if (with-remote-tool?) (-> "Remote" (link remote-menu)))
   (if (with-debugging-tool?) (-> "Debug" (link debug-menu)))
   (if (nnull? (test-menu)) (-> "Test" (link test-menu)))
   ---
@@ -228,7 +236,6 @@
   ((balloon (icon "tm_reload.xpm") "Reload") (revert-buffer))
   ((balloon (icon "tm_forward.xpm") "Browse forward") (cursor-history-forward))
   (if (in-presentation?) / (link dynamic-icons))
-  (if (with-remote-tool?) / (link remote-icons))
 ) ;menu-bind
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

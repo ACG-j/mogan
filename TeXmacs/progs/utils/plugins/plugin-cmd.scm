@@ -28,14 +28,14 @@
   ) ;cond
 ) ;tm-define
 
-(define (hacked-texmacs->code x)
-  (with r (texmacs->code x) (string-replace r "`" "`"))
+(define (hacked-texmacs->utf8raw x)
+  (with r (texmacs->utf8raw x) (string-replace r "`" "`"))
 ) ;define
 
-(tm-define (verbatim-serialize lan t)
+(tm-define (utf8raw-serialize lan t)
   (with u
     (pre-serialize lan t)
-    (string-append (escape-verbatim (hacked-texmacs->code u)) "\n")
+    (string-append (escape-verbatim (hacked-texmacs->utf8raw u)) "\n")
   ) ;with
 ) ;tm-define
 
@@ -43,8 +43,8 @@
   (with u
     (pre-serialize lan t)
     (string-append (char->string #\x02)
-      "verbatim:"
-      (escape-generic (texmacs->code u))
+      "utf8:"
+      (escape-generic (texmacs->utf8raw u))
       (char->string #\x05)
     ) ;string-append
   ) ;with
@@ -53,7 +53,7 @@
 (tm-define (plugin-serialize lan t)
   (with fun
     (ahash-ref plugin-serializer lan)
-    (if fun (fun lan t) (verbatim-serialize lan t))
+    (if fun (fun lan t) (utf8raw-serialize lan t))
   ) ;with
 ) ;tm-define
 

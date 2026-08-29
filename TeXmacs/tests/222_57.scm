@@ -12,7 +12,7 @@
 
 (import (liii check))
 
-(use-modules (liii ocr)
+(use-modules (ocr liii-ocr)
              (kernel texmacs tm-convert)
              (data latex))
 

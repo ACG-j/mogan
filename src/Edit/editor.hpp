@@ -25,6 +25,10 @@
 
 #ifdef QTTEXMACS
 #include "Qt/qt_simple_widget.hpp"
+#elif defined(MOGAN_CLI)
+#include "CLI/cli_simple_widget.hpp"
+#else
+#include "ImGui/im_simple_widget.hpp"
 #endif
 
 #define TEXMACS_COPYRIGHT                                                      \
@@ -40,6 +44,17 @@
 #define THE_LOCUS 128
 #define THE_MENUS 256
 #define THE_FREEZE 512
+
+// Menu rebuild categories (bit mask for update_menus)
+#define MENU_MAIN 1
+#define ICONS_MAIN 2
+#define ICONS_MODE 4
+#define ICONS_FOCUS 8
+#define ICONS_EXTRA 16
+#define TAB_PAGES 32
+#define NOTIFICATION 64
+#define SIDE_TOOLS 128
+#define MENU_ALL 255
 
 class tm_buffer_rep;
 class tm_view_rep;
@@ -146,6 +161,7 @@ public:
   virtual void      resume ()                                              = 0;
   virtual void      keyboard_focus_on (string field)                       = 0;
   virtual void      update_menus ()                                        = 0;
+  virtual void      update_menus (int mask)                                = 0;
   virtual int       get_pixel_size ()                                      = 0;
   virtual SI        get_visible_width ()                                   = 0;
   virtual SI        get_visible_height ()                                  = 0;
@@ -161,6 +177,7 @@ public:
   virtual void      invalidate (SI x1, SI y1, SI x2, SI y2)                = 0;
   virtual void      invalidate (rectangles rs)                             = 0;
   virtual void      invalidate_all ()                                      = 0;
+  virtual void      invalidate_visible ()                                  = 0;
   virtual void      notify_change (int changed)                            = 0;
   virtual bool      has_changed (int question)                             = 0;
   virtual int       idle_time (int event_type= ANY_EVENT)                  = 0;
@@ -185,6 +202,10 @@ public:
   virtual void   emulate_keyboard (string keys, string action= "")         = 0;
   virtual bool   complete_try ()                                           = 0;
   virtual void   source_complete_try ()                                    = 0;
+  virtual void   show_ghost_popup ()                                       = 0;
+  virtual void   hide_ghost_popup ()                                       = 0;
+  virtual void   show_diff_popup ()                                        = 0;
+  virtual void   hide_diff_popup ()                                        = 0;
   virtual void   complete_start (string prefix, array<string> compls)      = 0;
   virtual bool   complete_keypress (string key)                            = 0;
   virtual bool   source_complete_keypress (string key)                     = 0;
@@ -211,6 +232,7 @@ public:
   virtual void      recall_message ()                                      = 0;
   virtual void      set_user_active (bool b)                               = 0;
   virtual bool      get_user_active ()                                     = 0;
+  virtual bool      is_pre_editing () { return false; }
 
   /* public routines from edit_cursor */
   virtual path make_cursor_accessible (path p, bool forwards)= 0;
@@ -298,7 +320,9 @@ public:
   virtual color         get_env_color (string var_name)                   = 0;
   virtual color         get_init_color (string var_name)                  = 0;
   virtual language      get_env_language ()                               = 0;
+  virtual string        physical_font_for_string (string s)               = 0;
   virtual int           get_page_count ()                                 = 0;
+  virtual string        get_page_number_text (int page_index)             = 0;
   virtual int           get_current_page ()                               = 0;
   virtual SI            get_page_width (bool deco)                        = 0;
   virtual SI            get_pages_width (bool deco)                       = 0;
@@ -593,6 +617,7 @@ public:
   virtual string      get_metadata (string kind)                          = 0;
   virtual int         nr_pages ()                                         = 0;
   virtual void print_doc (url ps_name, bool to_file, int first, int last) = 0;
+  virtual void render_to_images (url dest, double zoomf)                  = 0;
   virtual void print_to_file (url ps_name, string first= "1",
                               string last= "1000000")                     = 0;
   virtual void print_buffer (string first= "1", string last= "1000000")   = 0;
@@ -617,6 +642,44 @@ public:
   virtual void       show_selection ()                                    = 0;
   virtual void       show_meminfo ()                                      = 0;
   virtual void       edit_special ()                                      = 0;
+#ifdef LORO_ENABLED
+  virtual void mirror_loro (const modification& mod)= 0;
+  virtual void apply_remote (string bytes)          = 0;
+  virtual void ensure_loro_seeded ()                = 0;
+  // 远端 update 到达后，把 meta section（style/initial/...）回写 buf->data。
+  virtual void apply_remote_meta ()= 0;
+  // ensure_loro_seeded 末尾调用：把本地缺失的 meta section 灌入 CRDT。
+  virtual void loro_seed_local_meta ()= 0;
+  // 本地 meta 改动镜像到 CRDT（由 edit_typeset 的 setter 调用，受
+  // applying_remote 守卫）。
+  virtual void mirror_meta_if_active (string section)  = 0;
+  virtual void collab_snapshot_cursor ()               = 0;
+  virtual void collab_restore_cursor (bool apply= true)= 0;
+  virtual void queue_remote (string raw_mod)           = 0;
+  virtual void apply_queued_remote ()                  = 0;
+  virtual bool collab_applying_remote ()               = 0;
+#endif
+  virtual void collab_enable () = 0; // 留在 LORO_ENABLED 条件外，由编译宏控制。
+  virtual bool collab_enabled ()= 0; // 这是为了保证 glue 生成过程中能找到实现
+
+  /** 远程 peer 光标（多光标协作）。位置以 TreeID+偏移编码进不透明 payload 串
+   *（由 collab_cursor_payload 产生），传输层不解析；本端在 set_remote_cursor
+   * 解码、在 get_remote_cursors（重绘时）解析回当前 buffer 的 path 供渲染。 */
+  struct remote_cursor_view {
+    string peer;      // 远端 peer id
+    path   caret;     // 已解析到当前 buffer 的插入符绝对 path（nil=不可定位）
+    path   sel_start; // 选区起绝对 path
+    path   sel_end;   // 选区止绝对 path（== sel_start 表示无选区）
+  };
+  virtual void set_remote_cursor (string peer, string payload) {}
+  virtual array<remote_cursor_view> get_remote_cursors () {
+    return array<remote_cursor_view> ();
+  }
+  virtual string collab_cursor_payload () { return ""; }
+  /** 本地光标/选区变化时由 edit_cursor/edit_select 调用，通知协作层「光标脏」
+   * 待节流上行。默认空；edit_modify 在 LORO_ENABLED 下覆写并加 applying 守卫。
+   */
+  virtual void collab_cursor_moved_hook () {}
 
   friend class tm_window_rep;
   friend class tm_server_rep;

@@ -128,7 +128,7 @@
   (cond ((tm-atomic? t) (tm->string t))
         ((tm-is? t 'plus)
          (with s
-           (string-recompose (map tm->rich-length (tm-children t)) "+")
+           (string-join (map tm->rich-length (tm-children t)) "+")
            (string-replace s "+-" "-")
          ) ;with
         ) ;
@@ -413,12 +413,7 @@
          (r (kbd-find-inv-system-binding '(geometry-right)))
         ) ;
     (if (and l r)
-      (set-message (string-append s
-                     " using "
-                     l
-                     ", "
-                     r
-                     ", etc. or "
+      (set-message (string-append s " using " l ", " r ", etc. or "
                      "via the fields in the focus bar"
                    ) ;string-append
         c
@@ -781,11 +776,9 @@
            (nw (- ow sx))
            (nh (- oh sy))
            (uniform-scale (lambda (scale-x scale-y)
-                            (let* ((scale (if (or (> scale-x 1) (> scale-y 1))
-                                            (max scale-x scale-y)
-                                            (min scale-x scale-y)
-                                          ) ;if
-                                   ) ;scale
+                            (let* ((ow2 (* ow ow))
+                                   (oh2 (* oh oh))
+                                   (scale (/ (+ (* scale-x ow2) (* scale-y oh2)) (+ ow2 oh2)))
                                   ) ;
                               (let* ((nw (* ow scale)) (nh (* oh scale)))
                                 (when (> nw 0.1)

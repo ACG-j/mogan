@@ -12,8 +12,16 @@
 
 function main()
     return {
+        group_name = "glue_html",
         binding_object = "",
         initializer_name = "initialize_glue_html",
+        standalone = true,
+        includes = {
+            "object_l1.hpp",
+            "object_l2.hpp",
+            "scheme.hpp",
+            "Html/html.hpp",
+        },
         glues = {
             {
                 scm_name = "parse-html",
@@ -45,6 +53,14 @@ function main()
                 ret_type = "tree",
                 arg_list = {
                     "int"
+                }
+            },
+            {
+                scm_name = "silent-html-progress",
+                cpp_name = "silent_html_progress",
+                ret_type = "void",
+                arg_list = {
+                    "bool"
                 }
             },
             {
