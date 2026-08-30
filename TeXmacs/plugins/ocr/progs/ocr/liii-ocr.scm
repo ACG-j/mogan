@@ -847,11 +847,15 @@
       (insert (ocr-result->texmacs result format))))
 
 (define (get-image t i bool)
-  (let* ((cur-t (tree-ref t i)))
-    (cond 
-      ((not cur-t) #f)
-      ((tree-is? cur-t 'image) (get-image-tuple cur-t 0 bool))
-      (else (get-image t (+ i 1) bool)))))
+  ;; Callers pass either an image node itself or a container whose children
+  ;; include an image node (clipboard and smart-paste use both forms).
+  (if (tree-is? t 'image)
+      (get-image-tuple t 0 bool)
+      (let* ((cur-t (tree-ref t i)))
+        (cond
+          ((not cur-t) #f)
+          ((tree-is? cur-t 'image) (get-image-tuple cur-t 0 bool))
+          (else (get-image t (+ i 1) bool))))))
 
 (define (get-image-tuple t i bool)
   (if bool
@@ -859,12 +863,12 @@
       (cond 
         ((not cur-t) #f)
         ((tree-is? cur-t 'tuple) (get-image-name cur-t 0))
-        (else (get-image-tuple t (+ i 1)))))
+        (else (get-image-tuple t (+ i 1) bool))))
     (let* ((cur-t (tree-ref t i)))
       (cond 
         ((not cur-t) #f)
         ((tree-is? cur-t 'tuple) (get-image-data cur-t 0))
-        (else (get-image-tuple t (+ i 1)))))))
+        (else (get-image-tuple t (+ i 1) bool))))))
 
 (define (get-image-name t i)
   (let* ((cur-t (tree-ref t i)))
@@ -878,7 +882,7 @@
     (cond 
       ((not cur-t) #f)
       ((tree-is? cur-t 'raw-data) (cdr (tree->stree cur-t)))
-      (else (get-image-name t (+ i 1))))))
+      (else (get-image-data t (+ i 1))))))
 
 (define (get-image-extension name)
   (let* ((parts (string-split name #\.)))
