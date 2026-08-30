@@ -27,7 +27,20 @@
   ("ocr.languages" ocr-default-languages noop))
 
 (define-public (ocr-command-available? cmd)
-  (and (string? cmd) (url-exists-in-path? cmd)))
+  ;; `url-exists-in-path?` is URL-oriented and can return false for ordinary
+  ;; PATH entries in the native Goldfish runtime. Resolve the executable
+  ;; explicitly so backend selection agrees with the shell that runs it.
+  (and (string? cmd)
+       (let loop ((dirs (string-decompose (getenv "PATH" "") ":")))
+         (if (null? dirs)
+             #f
+             (let* ((dir (car dirs))
+                    (candidate (if (== dir "")
+                                   cmd
+                                   (string-append dir "/" cmd))))
+               (if (file-exists? candidate)
+                   #t
+                   (loop (cdr dirs))))))))
 
 (define (ocr-command-output cmd)
   (tm-string-trim-both (eval-system cmd)))
@@ -714,24 +727,22 @@
 (define-public (ocr-clean-output output)
   (let* ((text (force-string output))
          (trimmed (tm-string-trim-both (ocr-output-body text))))
-    (if (> (length (string-decompose text "MOGAN_OCR_MARKDOWN_BEGIN")) 1)
-        trimmed
-        (let* ((lines (string-split trimmed #\newline))
-               (useful (list-filter lines
-                         (lambda (line)
-                           (let ((line* (tm-string-trim-both line)))
-                             (and (!= line* "")
-                                  (not (string-starts? line* "Running"))
-                                  (not (string-starts? line* "Loading"))
-                                  (not (string-starts? line* "Using"))
-                                  (not (string-starts? line* "INFO:"))
-                                  (not (string-starts? line* "WARNING:"))
-                                  (not (string-contains? line* " In image:"))
-                                  (not (string-starts? line* "In image:"))
-                                  (not (string-contains? line* " Outs:"))
-                                  (not (string-starts? line* "Outs:"))
-                                  (not (string-starts? line* "cost:"))))))))
-          (tm-string-trim-both (string-recompose useful "\n"))))))
+    (let* ((lines (string-split trimmed #\newline))
+           (useful (list-filter lines
+                     (lambda (line)
+                       (let ((line* (tm-string-trim-both line)))
+                         (and (!= line* "")
+                              (not (string-starts? line* "Running"))
+                              (not (string-starts? line* "Loading"))
+                              (not (string-starts? line* "Using"))
+                              (not (string-starts? line* "INFO:"))
+                              (not (string-starts? line* "WARNING:"))
+                              (not (string-contains? line* " In image:"))
+                              (not (string-starts? line* "In image:"))
+                              (not (string-contains? line* " Outs:"))
+                              (not (string-starts? line* "Outs:"))
+                              (not (string-starts? line* "cost:"))))))))
+      (tm-string-trim-both (string-recompose useful "\n")))))
 
 (define (ocr-run-provider provider image-path formula?)
   (ocr-clean-output
@@ -742,12 +753,10 @@
            ;; documents. If the VL model or runtime is unavailable, the Python
            ;; helper falls back to PPStructureV3; then we fall back to pix2text
            ;; for single CJK lines with inline math.
-           (let ((output (ocr-run-paddleocr image-path)))
-             ;; Decide on the cleaned text: a degenerate result still carries
-             ;; the MOGAN_OCR_MARKDOWN_BEGIN marker and log lines, so the raw
-             ;; output is never literally empty.
-             (if (!= (tm-string-trim-both (ocr-clean-output output)) "")
-                 output
+           (let* ((output (ocr-run-paddleocr image-path))
+                  (cleaned (ocr-clean-output output)))
+             (if (!= cleaned "")
+                 cleaned
                  (cond ((ocr-command-available? "p2t")
                         (ocr-run-pix2text image-path formula?))
                        ((ocr-easyocr-available?)
