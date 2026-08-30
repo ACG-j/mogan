@@ -26,24 +26,45 @@
   ("ocr.provider" "auto" noop)
   ("ocr.languages" ocr-default-languages noop))
 
+(define (ocr-command-path cmd)
+  ;; Resolve from PATH and the conventional per-user bin directory. GUI
+  ;; launchers often inherit a shorter PATH than an interactive shell.
+  (if (not (string? cmd))
+      ""
+      (let* ((home (getenv "HOME" ""))
+             (dirs (append (string-decompose (getenv "PATH" "") ":")
+                           (if (== home "")
+                               '()
+                               (list (string-append home "/.local/bin")))))
+             (absolute? (and (> (string-length cmd) 0)
+                             (char=? (string-ref cmd 0) #\/))))
+        (if (and absolute? (file-exists? cmd))
+            cmd
+            (let loop ((rest dirs))
+              (if (null? rest)
+                  ""
+                  (let* ((dir (force-string (car rest)))
+                         (candidate (if (== dir "")
+                                        cmd
+                                        (string-append dir "/" cmd))))
+                    (if (file-exists? candidate)
+                        candidate
+                        (loop (cdr rest))))))))))
+
 (define-public (ocr-command-available? cmd)
-  ;; `url-exists-in-path?` is URL-oriented and can return false for ordinary
-  ;; PATH entries in the native Goldfish runtime. Resolve the executable
-  ;; explicitly so backend selection agrees with the shell that runs it.
-  (and (string? cmd)
-       (let loop ((dirs (string-decompose (getenv "PATH" "") ":")))
-         (if (null? dirs)
-             #f
-             (let* ((dir (car dirs))
-                    (candidate (if (== dir "")
-                                   cmd
-                                   (string-append dir "/" cmd))))
-               (if (file-exists? candidate)
-                   #t
-                   (loop (cdr dirs))))))))
+  (!= (ocr-command-path cmd) ""))
 
 (define (ocr-command-output cmd)
   (tm-string-trim-both (eval-system cmd)))
+
+(define (ocr-command-output-yes? cmd)
+  ;; Python may emit startup notices in addition to the probe result. Accept
+  ;; an exact `yes` line instead of requiring the whole stdout buffer to match.
+  (let ((lines (string-split (ocr-command-output cmd) #\newline)))
+    (not (null?
+           (list-filter lines
+             (lambda (line)
+               (== (tm-string-trim-both line) "yes")))))))
 
 (define (ocr-command-error cmd)
   (tm-string-trim-both (check-stderr cmd)))
@@ -100,9 +121,7 @@
         (else (ocr-existing-path (cdr paths)))))
 
 (define (ocr-tool-python-path tool)
-  (let* ((path-dirs (string-decompose (getenv "PATH" "") ":"))
-         (candidates (map (lambda (dir) (path-join dir tool)) path-dirs))
-         (tool-path (ocr-existing-path candidates))
+  (let* ((tool-path (ocr-command-path tool))
          (script (if (file-exists? tool-path)
                      (string-load tool-path)
                      ""))
@@ -126,7 +145,7 @@
         ""
         (string-append command
                        " "
-                       (string-recompose (map ocr-sh-quote args) " ")))))
+                       (string-join (map ocr-sh-quote args) " ")))))
 
 (define-public (ocr-tool-python-site-library tool)
   (let* ((tool-python (ocr-tool-python-path tool))
@@ -159,7 +178,7 @@
                                 (path->string (path-join nvidia-root entry "lib")))
                               entries))
                (existing (list-filter lib-dirs file-exists?)))
-          (string-recompose existing ":")))))
+          (string-join existing ":")))))
 
 (define (ocr-command-with-tool-libraries tool command)
   (let ((library-path (ocr-tool-library-path tool)))
@@ -219,29 +238,27 @@
 
 (define-public (ocr-easyocr-available?)
   (and (ocr-command-available? "p2t")
-       (== (ocr-command-output
-             (ocr-shell-command
-               (ocr-tool-python-command
-                 "p2t"
-                 (string-append "import importlib.util; "
-                                "print('yes' if importlib.util.find_spec("
-                                (ocr-python-string "easyocr")
-                                ") else 'no')"))))
-           "yes")))
+       (ocr-command-output-yes?
+         (ocr-shell-command
+           (ocr-tool-python-command
+             "p2t"
+             (string-append "import importlib.util; "
+                            "print('yes' if importlib.util.find_spec("
+                            (ocr-python-string "easyocr")
+                            ") else 'no')"))))))
 
 (define-public (ocr-paddleocr-available?)
   (and (ocr-command-available? "paddleocr")
-       (== (ocr-command-output
-             (ocr-shell-command
-               (ocr-tool-python-command
-                 "paddleocr"
-                 (string-append "import importlib.util; "
-                                "print('yes' if importlib.util.find_spec("
-                                (ocr-python-string "paddleocr")
-                                ") and importlib.util.find_spec("
-                                (ocr-python-string "paddle")
-                                ") else 'no')"))))
-           "yes")))
+       (ocr-command-output-yes?
+         (ocr-shell-command
+           (ocr-tool-python-command
+             "paddleocr"
+             (string-append "import importlib.util; "
+                            "print('yes' if importlib.util.find_spec("
+                            (ocr-python-string "paddleocr")
+                            ") and importlib.util.find_spec("
+                            (ocr-python-string "paddle")
+                            ") else 'no')"))))))
 
 (define (ocr-easyocr-gpu-available?)
   (and (ocr-easyocr-available?)
@@ -256,40 +273,53 @@
   (if (ocr-pix2text-gpu-available?) "gpu" "cpu"))
 
 (define-public (ocr-available-providers)
-  (let ((providers '()))
-    (when (ocr-paddleocr-available?)
+  (let* ((providers '())
+         (paddle? (ocr-paddleocr-available?))
+         (easy? (ocr-easyocr-available?))
+         (pix2text? (ocr-command-available? "p2t"))
+         (rapid? (ocr-command-available? "rapid_latex_ocr")))
+    (when paddle?
       (set! providers (cons "paddleocr" providers)))
-    (when (ocr-easyocr-available?)
+    (when easy?
       (set! providers (cons "easyocr" providers)))
-    (when (ocr-command-available? "p2t")
+    (when pix2text?
       (set! providers (cons "pix2text" providers)))
-    (when (ocr-command-available? "rapid_latex_ocr")
+    (when rapid?
       (set! providers (cons "rapid-latex-ocr" providers)))
-    (reverse providers)))
+    (let ((result (reverse providers)))
+      (display* "OCR providers: paddle=" paddle?
+                ", easy=" easy?
+                ", pix2text=" pix2text?
+                ", rapid=" rapid? "\n")
+      result)))
 
 (define-public (ocr-select-provider formula?)
   (let ((preferred (get-preference "ocr.provider"))
         (available (ocr-available-providers)))
-    (cond ((and (== preferred "pix2text") (in? "pix2text" available))
-           "pix2text")
-          ((and (== preferred "paddleocr") (in? "paddleocr" available))
-           "paddleocr")
-          ((and (== preferred "easyocr") (in? "easyocr" available))
-           "easyocr")
-          ((and (== preferred "rapid-latex-ocr")
-                (in? "rapid-latex-ocr" available))
-           "rapid-latex-ocr")
-          ((and formula? (in? "rapid-latex-ocr" available))
-           "rapid-latex-ocr")
-          ((and (not formula?) (in? "paddleocr" available))
-           "paddleocr")
-          ((and (not formula?) (in? "easyocr" available))
-           "easyocr")
-          ((in? "pix2text" available)
-           "pix2text")
-          ((in? "rapid-latex-ocr" available)
-           "rapid-latex-ocr")
-          (else #f))))
+    (let ((provider
+            (cond ((and (== preferred "pix2text") (in? "pix2text" available))
+                   "pix2text")
+                  ((and (== preferred "paddleocr") (in? "paddleocr" available))
+                   "paddleocr")
+                  ((and (== preferred "easyocr") (in? "easyocr" available))
+                   "easyocr")
+                  ((and (== preferred "rapid-latex-ocr")
+                        (in? "rapid-latex-ocr" available))
+                   "rapid-latex-ocr")
+                  ((and formula? (in? "rapid-latex-ocr" available))
+                   "rapid-latex-ocr")
+                  ((and (not formula?) (in? "paddleocr" available))
+                   "paddleocr")
+                  ((and (not formula?) (in? "easyocr" available))
+                   "easyocr")
+                  ((in? "pix2text" available)
+                   "pix2text")
+                  ((in? "rapid-latex-ocr" available)
+                   "rapid-latex-ocr")
+                  (else #f))))
+      (display* "OCR provider selected: "
+                (if provider provider "none") "\n")
+      provider)))
 
 (define-public (ocr-provider-format provider formula?)
   (cond ((== provider "pix2text")
@@ -719,9 +749,9 @@
            (string-decompose text "MOGAN_OCR_MARKDOWN_BEGIN"))
          (parts (string-decompose text "Outs:")))
     (if (> (length markdown-parts) 1)
-        (string-recompose (cdr markdown-parts) "MOGAN_OCR_MARKDOWN_BEGIN")
+        (string-join (cdr markdown-parts) "MOGAN_OCR_MARKDOWN_BEGIN")
         (if (> (length parts) 1)
-        (string-recompose (cdr parts) "Outs:")
+        (string-join (cdr parts) "Outs:")
         text))))
 
 (define-public (ocr-clean-output output)
@@ -742,7 +772,7 @@
                               (not (string-contains? line* " Outs:"))
                               (not (string-starts? line* "Outs:"))
                               (not (string-starts? line* "cost:"))))))))
-      (tm-string-trim-both (string-recompose useful "\n")))))
+      (tm-string-trim-both (string-join useful "\n")))))
 
 (define (ocr-run-provider provider image-path formula?)
   (ocr-clean-output
@@ -803,7 +833,7 @@
     (if (> (length parts) 1) (cadr parts) "")))
 
 (define (ocr-markdown-lines->texmacs lines)
-  (let* ((markdown (tm-string-trim-both (string-recompose lines "\n"))))
+  (let* ((markdown (tm-string-trim-both (string-join lines "\n"))))
     (if (== markdown "")
         #f
         (generic->texmacs markdown "markdown-snippet"))))
