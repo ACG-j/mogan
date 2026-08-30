@@ -51,7 +51,7 @@
                  "-"
                  (number->string (getpid))
                  "-"
-                 (number->string (current-time))
+                 (number->string (time-second (current-time)))
                  "-"
                  (number->string ocr-temp-counter)
                  suffix))
@@ -83,7 +83,7 @@
 
 (define (ocr-existing-path paths)
   (cond ((null? paths) "")
-        ((file-exists? (car paths)) (car paths))
+        ((file-exists? (path->string (car paths))) (path->string (car paths)))
         (else (ocr-existing-path (cdr paths)))))
 
 (define (ocr-tool-python-path tool)
@@ -121,7 +121,7 @@
                         ""
                         (ocr-path-parent-name
                           (ocr-path-parent-name tool-python))))
-         (lib-root (if (== venv-root "") "" (path-join venv-root "lib")))
+         (lib-root (if (== venv-root "") "" (path->string (path-join venv-root "lib"))))
          (entries (if (file-exists? lib-root)
                       (vector->list (path-list lib-root))
                       '()))
@@ -130,7 +130,7 @@
                           (string-starts? entry "python"))))
          (site-dirs (list-filter
                       (map (lambda (entry)
-                             (path-join lib-root entry "site-packages"))
+                             (path->string (path-join lib-root entry "site-packages")))
                            python-dirs)
                       file-exists?)))
     (if (null? site-dirs) "" (car site-dirs))))
@@ -143,7 +143,7 @@
         (let* ((nvidia-root (string-append site-library "/nvidia"))
                (entries (vector->list (path-list nvidia-root)))
                (lib-dirs (map (lambda (entry)
-                                (path-join nvidia-root entry "lib"))
+                                (path->string (path-join nvidia-root entry "lib")))
                               entries))
                (existing (list-filter lib-dirs file-exists?)))
           (string-recompose existing ":")))))
@@ -902,7 +902,7 @@
 (define (ocr-save-image-to-temp t)
   (let* ((image-name (get-image t 0 #t))
          (extension (if image-name (get-image-extension image-name) "png"))
-         (temp-name (string-append temp-dir "/temp-" (number->string (current-time)) "." extension))
+         (temp-name (string-append temp-dir "/temp-" (number->string (time-second (current-time))) "." extension))
          (data-list (get-image t 0 #f)))
     (if (and (list? data-list) (not (null? data-list)))
         (let* ((base64-str (car data-list))
